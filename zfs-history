@@ -1,0 +1,257 @@
+console login ->
+
+user:live
+
+sudo apt install -y openssh-server
+sudo systemctl restart sshd
+
+ssh login ->
+sudo -i
+
+apt update
+apt install -y bash-completion apt-transport-https
+
+Ctrl+D
+Ctrl+D 
+
+
+ssh login ->
+sudo -i
+
+nano /etc/apt/sources.list
+	---
+deb https://deb.debian.org/debian/ bullseye main contrib non-free
+deb-src https://deb.debian.org/debian/ bullseye main contrib non-free
+
+deb https://deb.debian.org/debian/ bullseye-updates main contrib non-free
+deb-src https://deb.debian.org/debian/ bullseye-updates main contrib non-free
+
+deb https://deb.debian.org/debian-security bullseye-security main contrib
+deb-src https://deb.debian.org/debian-security bullseye-security main contrib
+	---
+
+apt update && apt upgrade
+--> upgrade kernel...
+
+apt install -y debootstrap dpkg-dev dkms gdisk parted zfsutils-linux
+modprobe zfs
+
+ls -l /dev/disk/by-id/
+DISK=/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi0-0-0-0
+DISK1=/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi0-0-0-1
+DISK2=/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi0-0-0-2
+echo $DISK
+echo $DISK1
+echo $DISK2
+
+swapoff --all
+
+	# --- Cleanup old MD array RAID ---
+	apt install -y mdadm
+	cat /proc/mdstat
+	mdadm --stop /dev/md0							# If so, stop them (replace ``md0`` as required):
+	mdadm --zero-superblock --force $DISK			# For an array using the whole disk:
+	mdadm --zero-superblock --force ${DISK}-part2	# For an array using a partition:
+
+# --- Cleanup old ZFS filesystem ---
+zpool destroy #	if exists
+
+zpool labelclear -f $DISK
+wipefs -a $DISK && sgdisk --zap-all $DISK
+
+zpool labelclear -f $DISK1
+wipefs -a $DISK1 && sgdisk --zap-all $DISK1
+
+zpool labelclear -f $DISK2
+wipefs -a $DISK2 && sgdisk --zap-all $DISK2
+
+partprobe
+
+lsblk 
+	# EFI
+	sgdisk -a1 -n1:24K:+1000K -t1:EF02 $DISK	# boot EFI
+	
+# UEFI
+sgdisk -n2:1M:+512M -t2:EF00 $DISK	# boot UEFI
+sgdisk -n3:0:+1G -t3:BF01 $DISK		# boot pool
+sgdisk -n4:0:0 -t4:BF00 $DISK		#root pool	raid0
+
+partprobe
+
+lsblk 
+
+# boot pool
+zpool create -f \
+    -o cachefile=/etc/zfs/zpool.cache \
+    -o ashift=12 -d \
+    -o feature@async_destroy=enabled \
+    -o feature@bookmarks=enabled \
+    -o feature@embedded_data=enabled \
+    -o feature@empty_bpobj=enabled \
+    -o feature@enabled_txg=enabled \
+    -o feature@extensible_dataset=enabled \
+    -o feature@filesystem_limits=enabled \
+    -o feature@hole_birth=enabled \
+    -o feature@large_blocks=enabled \
+    -o feature@livelist=enabled \
+    -o feature@lz4_compress=enabled \
+    -o feature@spacemap_histogram=enabled \
+    -o feature@zpool_checkpoint=enabled \
+    -O acltype=posixacl -O canmount=off -O compression=lz4 \
+    -O devices=off -O normalization=formD -O relatime=on -O xattr=sa \
+    -O mountpoint=/boot -R /mnt \
+	bpool ${DISK}-part3
+
+# root pool
+zpool create -f -o ashift=12 -O acltype=posixacl -O canmount=off -O compression=lz4 -O dnodesize=auto -O normalization=formD -O relatime=on -O xattr=sa -O mountpoint=/ -R /mnt rpool ${DISK}-part4
+
+zfs create -o canmount=off -o mountpoint=none rpool/ROOT
+zfs create -o canmount=off -o mountpoint=none bpool/BOOT
+
+zfs create -o canmount=noauto -o mountpoint=/ rpool/ROOT/debian
+zfs mount rpool/ROOT/debian
+
+zfs create -o mountpoint=/boot bpool/BOOT/debian
+
+zfs create rpool/home
+zfs create -o mountpoint=/root rpool/home/root
+chmod 700 /mnt/root
+zfs create -o canmount=off rpool/var
+zfs create -o canmount=off rpool/var/lib 
+zfs create rpool/var/log
+zfs create rpool/var/spool
+zfs create -o com.sun:auto-snapshot=false  rpool/var/cache
+zfs create -o com.sun:auto-snapshot=false  rpool/var/tmp
+chmod 1777 /mnt/var/tmp
+zfs create rpool/opt
+zfs create -o canmount=off rpool/usr
+zfs create rpool/usr/local
+zfs create rpool/var/mail
+zfs create rpool/var/www
+zfs create -o com.sun:auto-snapshot=false  rpool/var/lib/docker
+zfs create -o com.sun:auto-snapshot=false  rpool/var/lib/nfs
+mkdir /mnt/run
+mount -t tmpfs tmpfs /mnt/run
+mkdir /mnt/run/lock
+
+debootstrap bullseye /mnt
+
+mkdir /mnt/etc/zfs
+cp /etc/zfs/zpool.cache /mnt/etc/zfs/
+
+hostname uxn-zfs
+hostname > /mnt/etc/hostname
+nano /mnt/etc/hosts
+	++ 127.0.1.1       uxn-zfs
+
+ip addr show
+nano /mnt/etc/network/interfaces.d/eth0
+	auto eth0
+	iface eth0 inet dhcp
+
+APTSOURCES=$(cat <<EOF
+deb http://deb.debian.org/debian/ bullseye main contrib non-free
+deb-src http://deb.debian.org/debian/ bullseye main contrib non-free
+
+deb http://deb.debian.org/debian/ bullseye-updates main contrib non-free
+deb-src http://deb.debian.org/debian/ bullseye-updates main contrib non-free
+
+deb http://deb.debian.org/debian-security bullseye-security main contrib
+deb-src http://deb.debian.org/debian-security bullseye-security main contrib
+EOF
+)
+
+echo -e "${APTSOURCES}" > /mnt/etc/apt/sources.list
+mount --make-private --rbind /dev  /mnt/dev
+mount --make-private --rbind /proc /mnt/proc
+mount --make-private --rbind /sys  /mnt/sys
+chroot /mnt /usr/bin/env DISK=$DISK bash --login
+	
+	# -> zfs-chroot-history
+
+
+<-- reboot in to system
+
+apt install -y gdisk
+
+# Add disks to the pool
+DISK=/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi0-0-0-0
+DISK1=/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi0-0-0-1
+DISK2=/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi0-0-0-2
+
+zpool labelclear -f $DISK1
+wipefs -a $DISK1 && sgdisk --zap-all $DISK1
+
+zpool labelclear -f $DISK2
+wipefs -a $DISK2 && sgdisk --zap-all $DISK2
+
+sgdisk -n4:0:0 -t4:BF00 $DISK1		#root pool	raid0
+sgdisk -n4:0:0 -t4:BF00 $DISK2		#root pool	raid0
+
+lsblk
+
+zpool status rpool
+zpool add -f rpool $DISK1-part4 $DISK2-part4
+zpool status rpool
+
+username=yasin
+zfs create rpool/home/$username
+adduser $username
+cp -a /etc/skel/. /home/$username
+chown -R $username:$username /home/$username
+usermod -a -G audio,cdrom,dip,floppy,netdev,plugdev,sudo,video $username
+
+reboot
+
+zfs list -t snapshot
+--------------------
+NAME                        USED  AVAIL     REFER  MOUNTPOINT
+bpool/BOOT/debian@install    92K      -     47.1M  -
+rpool/ROOT/debian@install  6.23M      -      681M  -
+--------------------
+zfs list -t snapshot
+zfs destroy bpool/BOOT/debian@install
+zfs destroy rpool/ROOT/debian@install
+
+zfs snapshot bpool/BOOT/debian@minimalSystem
+zfs snapshot rpool/ROOT/debian@minimalSystem
+zfs snapshot -r rpool/home@2022-03-11_1821
+zfs snapshot -r rpool/var@2022-03-11_1821
+
+zfs list -t snapshot
+--------------------
+NAME                                   USED  AVAIL     REFER  MOUNTPOINT
+bpool/BOOT/debian@minimalSystem          0B      -     47.1M  -
+rpool/ROOT/debian@minimalSystem          0B      -      687M  -
+rpool/home@2022-03-11_1821               0B      -       96K  -
+rpool/home/root@2022-03-11_1821          0B      -      124K  -
+rpool/home/yasin@2022-03-11_1821         0B      -      108K  -
+rpool/var@2022-03-11_1821                0B      -       96K  -
+rpool/var/cache@2022-03-11_1821          0B      -     95.6M  -
+rpool/var/lib@2022-03-11_1821            0B      -       96K  -
+rpool/var/lib/docker@2022-03-11_1821     0B      -       96K  -
+rpool/var/lib/nfs@2022-03-11_1821        0B      -       96K  -
+rpool/var/log@2022-03-11_1821          592K      -     2.13M  -
+rpool/var/mail@2022-03-11_1821           0B      -       96K  -
+rpool/var/spool@2022-03-11_1821          0B      -       96K  -
+rpool/var/tmp@2022-03-11_1821            0B      -      128K  -
+rpool/var/www@2022-03-11_1821            0B      -       96K  -
+--------------------
+
+
+tasksel
+-------------------------------------
+│    [ ] Debian desktop environment │ 
+│    [ ] ... GNOME                  │ 
+│    [ ] ... Xfce                   │ 
+│    [ ] ... GNOME Flashback        │ 
+│    [*] ... KDE Plasma             │ 
+│    [ ] ... Cinnamon               │ 
+│    [ ] ... MATE                   │ 
+│    [ ] ... LXDE                   │ 
+│    [ ] ... LXQt                   │ 
+│    [*] web server                 │ 
+│    [*] SSH server                 │ 
+│    [*] laptop						│
+-------------------------------------
+
