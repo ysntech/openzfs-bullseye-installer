@@ -110,7 +110,8 @@ function selectInstallationDisk {
 
   export DISK=$(env | grep -iPo '^DISK'$installationDiskNumber'=\K.*')
 
-  read -r -p "\nSelected disk is : ${DISK} confirm ? [ Y / n ] " diskSelectConfirm
+  echo -e
+  read -r -p "Selected disk is : ${DISK} confirm ? [ Y / n ] " diskSelectConfirm
 
   if [ -z "${diskSelectConfirm}" ] || [ "${diskSelectConfirm}" == "y" ] || [ "${diskSelectConfirm}" == "Y" ]; then
     innerSeperator "\nThe --- ${DISK} --- is selected!\n"
@@ -330,7 +331,7 @@ function changeHostNameBaseSystem {
     newHostname=$(hostname)-zfs
   fi
 
-  sed '2 i 127.0.1.1\t'"${newHostname}" /etc/hostname
+  sed '2 i 127.0.1.1\t'"${newHostname}" /etc/hosts > /mnt/etc/hosts
 
   stepByStep "changeHostNameBaseSystem"
 }
@@ -348,7 +349,7 @@ EOF
 }
 
 function addAptSourcesToBaseSystem {
-  dividerLine "Adding apt/sources.list to base system"
+  dividerLine "Adding /etc/apt/sources.list to base system"
   aptSourcesHttp "mnt"
 
   stepByStep "addAptSourcesToBaseSystem"
@@ -386,7 +387,7 @@ function chrootAutoremove {
 function chrootInstallBaseApps {
   dividerLine "Apt install chrooted system's applications"
   chroot /mnt apt -qq install -y sudo parted htop screen bash-completion apt-transport-https openssh-server \
-      ca-certificates console-setup locales dosfstools grub-efi-amd64 shim-signed sed
+      ca-certificates console-setup locales dosfstools grub-efi-amd64 shim-signed gdisk
 
   stepByStep "chrootInstallBaseApps"
 }
@@ -426,7 +427,8 @@ function chrootWriteUefiPart {
   innerSeperator "Create /boot/efi"
   chroot /mnt mkdir /boot/efi
   innerSeperator "Write /etc/fstab"
-  chroot /mnt /usr/bin/env DISK="${DISK}" echo -e "${DISK}-part2 /boot/efi vfat defaults 0 0" >> /etc/fstab
+#  chroot /mnt /usr/bin/env DISK="${DISK}" echo -e ${DISK}-part2" /boot/efi vfat defaults 0 0" >> /etc/fstab
+  echo -e ${DISK}-part2" /boot/efi vfat defaults 0 0" >> /mnt/etc/fstab
   innerSeperator "Mount EFI"
   chroot /mnt mount /boot/efi
   innerSeperator "Purge os-prober [ Dual boot systems don't needed ]"
@@ -438,7 +440,7 @@ function chrootWriteUefiPart {
 function chrootCreateRootPassword {
   dividerLine "Chrooted System Change 'root' password"
 #  read -rs -p "Create root password : " chrootRootPassword
-  passwd
+  chroot /mnt passwd
 
   stepByStep "chrootCreateRootPassword"
 }
@@ -486,7 +488,7 @@ function chrootChangeGrubDefaults {
   dividerLine "Chroot set /etc/default/grub file"
   chroot /mnt sed -i 's/GRUB_TIMEOUT=5/GRUB_TIMEOUT=2/g' /etc/default/grub
   chroot /mnt sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet"/GRUB_CMDLINE_LINUX_DEFAULT="console"/g' /etc/default/grub
-  chroot /mnt sed -i 's/GRUB_CMDLINE_LINUX=""/GRUB_CMDLINE_LINUX="root=ZFS=rpool/ROOT/debian net.ifnames=0 biosdevname=0"/g' /etc/default/grub
+  chroot /mnt sed -i 's/GRUB_CMDLINE_LINUX=""/GRUB_CMDLINE_LINUX="root=ZFS=rpool\/ROOT\/debian net.ifnames=0 biosdevname=0"/g' /etc/default/grub
   chroot /mnt update-grub
 
   stepByStep "chrootChangeGrubDefaults"
@@ -513,14 +515,14 @@ function chrootZfsListCaches {
   sleep 3
   chroot /mnt watch -n1 cat /etc/zfs/zfs-list.cache/rpool
   innerSeperator "Chroot get the zed application and exit [ Ctrl + C ]"
-  chroot /mnt fg
+  chroot /mnt pkill -15 zed
 
   stepByStep "chrootZfsListCaches"
 }
 
 function chrootChangeMntDir {
   dividerLine "Chroot change '/mnt/' to '/' root file system"
-  chroot /mnt sed -Ei "s|/mnt/?|/|" /etc/zfs/zfs-list.cache/*
+  sed -Ei "s|/mnt/?|/|" /mnt/etc/zfs/zfs-list.cache/*
 
   stepByStep "chrootChangeMntDir"
 }
@@ -534,7 +536,7 @@ function chrootTakeInitialSnapshots {
 }
 
 function unmountAllFilesystems {
-  dividerLine "Unmount all /mnt partitions"
+  dividerLine "Unmount all ZFS /mnt partitions"
   mount | grep -v zfs | tac | awk '/\/mnt/ {print $3}' | xargs -i{} umount -lf {}		# LiveCD environment to unmount all filesystems
 
   stepByStep "unmountAllFilesystems"
@@ -542,9 +544,94 @@ function unmountAllFilesystems {
 
 function exportZfsPools {
   dividerLine "Export all ZFS Pools"
-  zpool export -a
+  zpool export -af
 
   stepByStep "exportZfsPools"
+}
+
+function afterReboot {
+  dividerLine "After the reboot you might want to start 'after-reboot.sh':"
+  AFTER_REBOOT_SH=$(cat <<EOF
+#!/usr/bin/env bash
+
+function dividerLine {
+  echo -e "\\\n######################################################################"
+  echo -e "#    \$1"
+  echo -e "######################################################################\\\n"
+}
+
+function innerSeperator {
+  echo -e "----------------------------------------------------------------------"
+  echo -e "    \$1"
+  echo -e "----------------------------------------------------------------------"
+}
+
+function getUserPassword {
+    read -rs -p "Password : " userPass
+    echo ""
+    read -rs -p "Password (Re) : " userPassSecond
+
+    if [ "\${userPass}" != "\${userPassSecond}" ]; then
+      echo -e "Passwords don't match!"
+      unset userPass
+      unset userPassSecond
+      getUserPassword
+    fi
+}
+
+function addNewUserToBaseSystem {
+  dividerLine "Add New User to System"
+  read -r -p "Username : [ Username / N (continue without) ] " username
+
+  if [ -z "\${username}" ]; then
+    echo -e "You should give a username or 'N' to continue without one!"
+    addNewUserToBaseSystem
+  fi
+
+  if [ ! "\${username}" == "n" ] || [ ! "\${username}" == "N" ]; then
+    innerSeperator "The username is : \${username}"
+    innerSeperator "ZFS Create \${username} 's pool"
+    zfs create rpool/home/\${username}
+    chown -R \${username}:\${username} /home/\${username}
+    adduser "\${username}"
+    cp -a /etc/skel/. /home/\${username}
+    chown -R \${username}:\${username} /home/\${username}
+    usermod -a -G audio,cdrom,dip,floppy,netdev,plugdev,sudo,video \${username}
+    innerSeperator "Set user password"
+    getUserPassword
+    echo "\${username}:\${userPass}" | chpasswd
+    innerSeperator "\${username} 's Password has Changed"
+  fi
+}
+
+function startTaskSel {
+  dividerLine "TASKSEL"
+  tasksel
+}
+
+addNewUserToBaseSystem
+startTaskSel
+
+EOF
+)
+  innerSeperator "/root/after-reboot.sh script generated."
+  echo -e "${AFTER_REBOOT_SH}" > /root/after-reboot.sh
+#  echo -e "${AFTER_REBOOT_SH}" > "$(pwd)"/after-reboot.sh
+  chmod 700 /root/after-reboot.sh
+#  chmod 700 "$(pwd)"/after-reboot.sh
+
+  stepByStep "afterReboot"
+}
+
+function rebootSystem {
+  read -r -p "Reboot the system : [ Y / n ] " rebootConfirm
+
+  if [ -z "${rebootConfirm}" ] || [ "${rebootConfirm}" == "Y" ] || [ "${rebootConfirm}" == "y" ]; then
+    dividerLine "System will reboot in 5 seconds..."
+    sleep 5
+    reboot
+  fi
+  stepByStep "rebootSystem"
 }
 
 #chroot /mnt /usr/bin/env DISK=$DISK bash --login
@@ -590,7 +677,8 @@ chrootChangeMntDir
 chrootTakeInitialSnapshots
 unmountAllFilesystems
 exportZfsPools
-reboot
+afterReboot
+rebootSystem
 
 
 

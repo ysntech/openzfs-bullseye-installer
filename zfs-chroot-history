@@ -84,6 +84,7 @@ nano /etc/default/grub
 	GRUB_SAVEDEFAULT=true
 	GRUB_DEFAULT=saved
 	---
+	
 mv /etc/network/interfaces.d/enp1s0 /etc/network/interfaces.d/eth0
 	++ nano /etc/network/interfaces.d/eth0		# change interface name
 

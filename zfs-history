@@ -165,6 +165,8 @@ echo -e "${APTSOURCES}" > /mnt/etc/apt/sources.list
 mount --make-private --rbind /dev  /mnt/dev
 mount --make-private --rbind /proc /mnt/proc
 mount --make-private --rbind /sys  /mnt/sys
+
+
 chroot /mnt /usr/bin/env DISK=$DISK bash --login
 	
 	# -> zfs-chroot-history
@@ -178,6 +180,8 @@ apt install -y gdisk
 DISK=/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi0-0-0-0
 DISK1=/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi0-0-0-1
 DISK2=/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi0-0-0-2
+DISK3=/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi0-0-0-3
+
 
 zpool labelclear -f $DISK1
 wipefs -a $DISK1 && sgdisk --zap-all $DISK1
@@ -185,13 +189,19 @@ wipefs -a $DISK1 && sgdisk --zap-all $DISK1
 zpool labelclear -f $DISK2
 wipefs -a $DISK2 && sgdisk --zap-all $DISK2
 
+zpool labelclear -f $DISK3
+wipefs -a $DISK2 && sgdisk --zap-all $DISK3
+
 sgdisk -n4:0:0 -t4:BF00 $DISK1		#root pool	raid0
 sgdisk -n4:0:0 -t4:BF00 $DISK2		#root pool	raid0
+sgdisk -n4:0:0 -t4:BF00 $DISK3		#root pool	raid0
 
 lsblk
 
 zpool status rpool
 zpool add -f rpool $DISK1-part4 $DISK2-part4
+	zpool offline -f rpool $DISK_X
+	zpool remove rpool $DISK_X
 zpool status rpool
 
 username=yasin
