@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+###########################################################################################################
+# Bash Script of this Documentation :
+# https://openzfs.github.io/openzfs-docs/Getting%20Started/Debian/Debian%20Bullseye%20Root%20on%20ZFS.html#debian-bullseye-root-on-zfs
+#
+# Copyright © 2022 - installer.sh
+# Yasin Karabulak
+# info@yasinkarabulak.com
+# https://github.com/unique1984
+#
+###########################################################################################################
 
 # this will open step by step progress [ 1 / 0 ]
 STEP_BY_STEP=1
@@ -68,7 +78,13 @@ function aptSourcesHttp {
 }
 
 function aptSourcesHttps {
-  echo -e "${APT_SOURCES_HTTPS}" > /etc/apt/sources.list
+  if [ ! -z $1 ]; then
+    echo -e "${APT_SOURCES_HTTPS}" > /mnt/etc/apt/sources.list
+  else
+    echo -e "${APT_SOURCES_HTTPS}" > /etc/apt/sources.list
+  fi
+
+  stepByStep "aptSourcesHttps"
 }
 
 function aptUpdateUpgrade {
@@ -81,7 +97,7 @@ function aptUpdateUpgrade {
 function installBaseApps {
   dividerLine "Base Applications Installation"
   apt -qqq update -y
-  yes | apt -qq install -y bash-completion debootstrap dpkg-dev dkms gdisk parted zfsutils-linux mdadm sed
+  yes | apt -qq install -y bash-completion debootstrap dpkg-dev dkms gdisk parted zfsutils-linux mdadm sed ovmf
   modprobe zfs
 
   stepByStep "installBaseApps"
@@ -527,28 +543,6 @@ function chrootChangeMntDir {
   stepByStep "chrootChangeMntDir"
 }
 
-function chrootTakeInitialSnapshots {
-  dividerLine "Chroot take initial snapshots"
-  chroot /mnt zfs snapshot bpool/BOOT/debian@initial
-  chroot /mnt zfs snapshot rpool/ROOT/debian@initial
-
-  stepByStep "chrootTakeInitialSnapshots"
-}
-
-function unmountAllFilesystems {
-  dividerLine "Unmount all ZFS /mnt partitions"
-  mount | grep -v zfs | tac | awk '/\/mnt/ {print $3}' | xargs -i{} umount -lf {}		# LiveCD environment to unmount all filesystems
-
-  stepByStep "unmountAllFilesystems"
-}
-
-function exportZfsPools {
-  dividerLine "Export all ZFS Pools"
-  zpool export -af
-
-  stepByStep "exportZfsPools"
-}
-
 function afterReboot {
   dividerLine "After the reboot you might want to start 'after-reboot.sh':"
   AFTER_REBOOT_SH=$(cat <<EOF
@@ -615,12 +609,35 @@ startTaskSel
 EOF
 )
   innerSeperator "/root/after-reboot.sh script generated."
-  echo -e "${AFTER_REBOOT_SH}" > /root/after-reboot.sh
+  echo -e "${AFTER_REBOOT_SH}" > /mnt/root/after-reboot.sh
 #  echo -e "${AFTER_REBOOT_SH}" > "$(pwd)"/after-reboot.sh
-  chmod 700 /root/after-reboot.sh
+  chmod 700 /mnt/root/after-reboot.sh
 #  chmod 700 "$(pwd)"/after-reboot.sh
 
   stepByStep "afterReboot"
+}
+
+function chrootTakeInitialSnapshots {
+  dividerLine "Chroot take initial snapshots"
+  chroot /mnt zfs snapshot bpool/BOOT/debian@initial
+  chroot /mnt zfs snapshot rpool/ROOT/debian@initial
+
+  stepByStep "chrootTakeInitialSnapshots"
+}
+
+function unmountAllFilesystems {
+  dividerLine "Unmount all ZFS /mnt partitions"
+  mount | grep -v zfs | tac | awk '/\/mnt/ {print $3}' | xargs -i{} umount -lf {}		# LiveCD environment to unmount all filesystems
+
+  stepByStep "unmountAllFilesystems"
+}
+
+function exportZfsPools {
+  dividerLine "Export all ZFS Pools"
+  chroot /mnt zpool export -af
+  zpool export -af
+
+  stepByStep "exportZfsPools"
 }
 
 function rebootSystem {
@@ -662,7 +679,6 @@ aptSourcesHttps "mnt"
 chrootUpdate
 chrootUpgrade
 chrootAutoremove
-chrootInstallBaseApps
 chrootSymlinkMounts
 chrootDpkgReconfigure
 chrootInstallKernelHeaders
@@ -674,12 +690,8 @@ chrootChangeGrubDefaults
 chrootGrubInstall
 chrootZfsListCaches
 chrootChangeMntDir
+afterReboot
 chrootTakeInitialSnapshots
 unmountAllFilesystems
 exportZfsPools
-afterReboot
 rebootSystem
-
-
-
-# TODO LAST PARTS...
