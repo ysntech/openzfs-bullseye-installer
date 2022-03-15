@@ -444,7 +444,14 @@ function chrootWriteUefiPart {
   chroot /mnt mkdir /boot/efi
   innerSeperator "Write /etc/fstab"
 #  chroot /mnt /usr/bin/env DISK="${DISK}" echo -e ${DISK}-part2" /boot/efi vfat defaults 0 0" >> /etc/fstab
-  echo -e ${DISK}-part2" /boot/efi vfat defaults 0 0" >> /mnt/etc/fstab
+  bootEfiUuid=$(blkid -s UUID -o value ${DISK}-part2)
+    if [ ! -z "${bootEfiUuid}" ]; then
+      innerSeperator "UUID : ${bootEfiUuid}"
+      echo -e "/dev/disk/by-uuid/${bootEfiUuid} /boot/efi vfat defaults 0 0" >> /mnt/etc/fstab
+    else
+      innerSeperator "DISK BY  ID : ${DISK}-part2"
+      echo -e "${DISK}-part2 /boot/efi vfat defaults 0 0" >> /mnt/etc/fstab
+    fi
   innerSeperator "Mount EFI"
   chroot /mnt mount /boot/efi
   innerSeperator "Purge os-prober [ Dual boot systems don't needed ]"
