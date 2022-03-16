@@ -13,6 +13,9 @@
 # this will open step by step progress [ 1 / 0 ]
 STEP_BY_STEP=1
 
+export bPoolName="bpool"
+export rPoolName="rpool"
+
 function dividerLine {
   echo -e "\n######################################################################"
   echo -e "#    $1"
@@ -210,6 +213,60 @@ function uefiPartitioning {
   stepByStep "uefiPartitioning"
 }
 
+function setBpoolName {
+  read -r -p "Set new bpool name [a-z] : e.g [ bootpool ] " bpoolNameNew
+
+  if [ -z "${bpoolNameNew}" ]; then
+    bpoolNameNew="bootpool"
+  fi
+
+  read -r -p "New bpool name is ${bpoolNameNew} : [ Y / n ]" bpoolNameConfirm
+
+  if [ -z "${bpoolNameConfirm}" ] || [ "${bpoolNameConfirm}" == "Y" ] || [ "${bpoolNameConfirm}" == "y" ]; then
+    unset bpoolName
+    export bpoolName="${bpoolNameNew}"
+  else
+    setBpoolName
+  fi
+}
+
+function setRpoolName {
+  read -r -p "Set new rpool name [a-z] : e.g [ rootpool ] " rpoolNameNew
+
+  if [ -z "${rpoolNameNew}" ]; then
+    rpoolNameNew="rootpool"
+  fi
+
+  read -r -p "New rpool name is ${rpoolNameNew} : [ Y / n ]" rpoolNameConfirm
+
+  if [ -z "${rpoolNameConfirm}" ] || [ "${rpoolNameConfirm}" == "Y" ] || [ "${rpoolNameConfirm}" == "y" ]; then
+    unset rpoolName
+    export rpoolName="${rpoolNameNew}"
+  else
+    setRpoolName
+  fi
+}
+
+function checkSystemHaveZfsPool {
+  systemPools=$(zpool status 2> /dev/null | grep -iPo "pool: \K.*")
+
+  if [ ! -z "${systemPools}" ]; then
+    zpool status
+    hasBpool=$(grep "bpool" <<< "${systemPools}")
+    hasRpool=$(grep "rpool" <<< "${systemPools}")
+
+    if [ ! -z "${hasBpool}" ]; then
+      setBpoolName
+    fi
+
+    if [ ! -z "${hasRpool}" ]; then
+      setRpoolName
+    fi
+
+#    checkSystemHaveZfsPool # check again!
+  fi
+}
+
 function createBootPool {
   dividerLine "Creating BOOT pool"
   if [ -L "${DISK}"-part3 ]; then
@@ -232,7 +289,7 @@ function createBootPool {
         -O acltype=posixacl -O canmount=off -O compression=lz4 \
         -O devices=off -O normalization=formD -O relatime=on -O xattr=sa \
         -O mountpoint=/boot -R /mnt \
-      bpool "${DISK}"-part3
+      "${bpoolName}" "${DISK}"-part3
 
     innerSeperator "Listing ZFS Filesystem"
     zfs list -t filesystem
@@ -252,7 +309,7 @@ function createRootPool {
     zpool create -f \
       -o ashift=12 -O acltype=posixacl -O canmount=off -O compression=lz4 \
       -O dnodesize=auto -O normalization=formD -O relatime=on \-O xattr=sa \
-      -O mountpoint=/ -R /mnt rpool "${DISK}"-part4
+      -O mountpoint=/ -R /mnt "${rpoolName}" "${DISK}"-part4
 
     innerSeperator "Listing ZFS Filesystem"
     zfs list -t filesystem
@@ -268,50 +325,50 @@ function createRootPool {
 function createPoolsAndMounts {
   dividerLine "Creating Mount Pools"
 
-  innerSeperator "Creating rpool/BOOT & bpool/BOOT"
-  zfs create -o canmount=off -o mountpoint=none rpool/ROOT
-  zfs create -o canmount=off -o mountpoint=none bpool/BOOT
+  innerSeperator "Creating ${rpoolName}/BOOT & ${bpoolName}/BOOT"
+  zfs create -o canmount=off -o mountpoint=none ${rpoolName}/ROOT
+  zfs create -o canmount=off -o mountpoint=none ${bpoolName}/BOOT
 
   innerSeperator "Creating and mounting root ( / ) filesystem"
-  zfs create -o canmount=noauto -o mountpoint=/ rpool/ROOT/debian
-  zfs mount rpool/ROOT/debian
+  zfs create -o canmount=noauto -o mountpoint=/ ${rpoolName}/ROOT/debian
+  zfs mount ${rpoolName}/ROOT/debian
 
-  innerSeperator "Creating bpool/BOOT/debian pool [ EFI system nesting directory]"
-  zfs create -o mountpoint=/boot bpool/BOOT/debian
+  innerSeperator "Creating ${bpoolName}/BOOT/debian pool [ EFI system nesting directory]"
+  zfs create -o mountpoint=/boot ${bpoolName}/BOOT/debian
 
-  innerSeperator "Creating rpool/home"
-  zfs create rpool/home
-  innerSeperator "Creating and mounting rpool/home/root to /root"
-  zfs create -o mountpoint=/root rpool/home/root
+  innerSeperator "Creating ${rpoolName}/home"
+  zfs create ${rpoolName}/home
+  innerSeperator "Creating and mounting ${rpoolName}/home/root to /root"
+  zfs create -o mountpoint=/root ${rpoolName}/home/root
   chmod 700 /mnt/root
-  innerSeperator "Creating rpool/var"
-  zfs create -o canmount=off rpool/var
-  innerSeperator "Creating rpool/var/lib"
-  zfs create -o canmount=off rpool/var/lib
-  innerSeperator "Creating rpool/var/log"
-  zfs create rpool/var/log
-  innerSeperator "Creating rpool/var/mail"
-  zfs create rpool/var/mail
-  innerSeperator "Creating rpool/var/www"
-  zfs create rpool/var/www
-  innerSeperator "Creating rpool/var/spool"
-  zfs create rpool/var/spool
-  innerSeperator "Creating rpool/var/cache (without auto snapshots)"
-  zfs create -o com.sun:auto-snapshot=false  rpool/var/cache
-  innerSeperator "Creating rpool/var/tmp (without auto snapshots)"
-  zfs create -o com.sun:auto-snapshot=false  rpool/var/tmp
+  innerSeperator "Creating ${rpoolName}/var"
+  zfs create -o canmount=off ${rpoolName}/var
+  innerSeperator "Creating ${rpoolName}/var/lib"
+  zfs create -o canmount=off ${rpoolName}/var/lib
+  innerSeperator "Creating ${rpoolName}/var/log"
+  zfs create ${rpoolName}/var/log
+  innerSeperator "Creating ${rpoolName}/var/mail"
+  zfs create ${rpoolName}/var/mail
+  innerSeperator "Creating ${rpoolName}/var/www"
+  zfs create ${rpoolName}/var/www
+  innerSeperator "Creating ${rpoolName}/var/spool"
+  zfs create ${rpoolName}/var/spool
+  innerSeperator "Creating ${rpoolName}/var/cache (without auto snapshots)"
+  zfs create -o com.sun:auto-snapshot=false  ${rpoolName}/var/cache
+  innerSeperator "Creating ${rpoolName}/var/tmp (without auto snapshots)"
+  zfs create -o com.sun:auto-snapshot=false  ${rpoolName}/var/tmp
   innerSeperator "Setting sticky bit [ 1 ] for /mnt/var/tmp (only owner)"
   chmod 1777 /mnt/var/tmp
-  innerSeperator "Creating rpool/opt"
-  zfs create rpool/opt
-  innerSeperator "Creating rpool/usr"
-  zfs create -o canmount=off rpool/usr
-  innerSeperator "Creating rpool/usr/local"
-  zfs create rpool/usr/local
-  innerSeperator "Creating rpool/var/lib/docker (without auto snapshots)"
-  zfs create -o com.sun:auto-snapshot=false  rpool/var/lib/docker
-  innerSeperator "Creating rpool/var/lib/nfs (without auto snapshots)"
-  zfs create -o com.sun:auto-snapshot=false  rpool/var/lib/nfs
+  innerSeperator "Creating ${rpoolName}/opt"
+  zfs create ${rpoolName}/opt
+  innerSeperator "Creating ${rpoolName}/usr"
+  zfs create -o canmount=off ${rpoolName}/usr
+  innerSeperator "Creating ${rpoolName}/usr/local"
+  zfs create ${rpoolName}/usr/local
+  innerSeperator "Creating ${rpoolName}/var/lib/docker (without auto snapshots)"
+  zfs create -o com.sun:auto-snapshot=false  ${rpoolName}/var/lib/docker
+  innerSeperator "Creating ${rpoolName}/var/lib/nfs (without auto snapshots)"
+  zfs create -o com.sun:auto-snapshot=false  ${rpoolName}/var/lib/nfs
   innerSeperator "Creating /mnt/run"
   mkdir /mnt/run
   innerSeperator "Mounting /mnt/run using tmp filesystem"
@@ -479,7 +536,7 @@ Before=zfs-import-cache.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/sbin/zpool import -N -o cachefile=none bpool
+ExecStart=/sbin/zpool import -N -o cachefile=none ${bpoolName}
 # Work-around to preserve zpool cache:
 ExecStartPre=-/bin/mv /etc/zfs/zpool.cache /etc/zfs/preboot_zpool.cache
 ExecStartPost=-/bin/mv /etc/zfs/preboot_zpool.cache /etc/zfs/zpool.cache
@@ -490,9 +547,9 @@ EOF
 )
 
   innerSeperator "Write service file"
-  echo -e "${BPOOL_SERVICE}" > /mnt/etc/systemd/system/zfs-import-bpool.service
+  echo -e "${BPOOL_SERVICE}" > /mnt/etc/systemd/system/zfs-import-${bpoolName}.service
   innerSeperator "Enable service"
-  chroot /mnt systemctl enable zfs-import-bpool.service
+  chroot /mnt /usr/bin/env bpoolName=${bpoolName} systemctl enable zfs-import-${bpoolName}.service
   innerSeperator "Enable tmp.mount service"
   chroot /mnt cp /usr/share/systemd/tmp.mount /etc/systemd/system/
   chroot /mnt systemctl enable tmp.mount
@@ -511,7 +568,7 @@ function chrootChangeGrubDefaults {
   dividerLine "Chroot set /etc/default/grub file"
   chroot /mnt sed -i 's/GRUB_TIMEOUT=5/GRUB_TIMEOUT=2/g' /etc/default/grub
   chroot /mnt sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet"/GRUB_CMDLINE_LINUX_DEFAULT="console"/g' /etc/default/grub
-  chroot /mnt sed -i 's/GRUB_CMDLINE_LINUX=""/GRUB_CMDLINE_LINUX="root=ZFS=rpool\/ROOT\/debian net.ifnames=0 biosdevname=0"/g' /etc/default/grub
+  chroot /mnt /usr/bin/env rpoolName=${rpoolName} sed -i 's/GRUB_CMDLINE_LINUX=""/GRUB_CMDLINE_LINUX="root=ZFS='${rpoolName}'\/ROOT\/debian net.ifnames=0 biosdevname=0"/g' /etc/default/grub
   chroot /mnt update-grub
 
   stepByStep "chrootChangeGrubDefaults"
@@ -527,16 +584,16 @@ function chrootGrubInstall {
 function chrootZfsListCaches {
   dividerLine "Chroot ZFS list caches"
   chroot /mnt mkdir /etc/zfs/zfs-list.cache
-  chroot /mnt touch /etc/zfs/zfs-list.cache/bpool
-  chroot /mnt touch /etc/zfs/zfs-list.cache/rpool
+  chroot /mnt /usr/bin/env bpoolName=${bpoolName} touch /etc/zfs/zfs-list.cache/${bpoolName}
+  chroot /mnt /usr/bin/env rpoolName=${rpoolName} touch /etc/zfs/zfs-list.cache/${rpoolName}
   chroot /mnt ln -s /usr/lib/zfs-linux/zed.d/history_event-zfs-list-cacher.sh /etc/zfs/zed.d
   chroot /mnt zed -F &
   innerSeperator "When you see changes on the screen [ Ctrl + C ]"
   sleep 3
-  chroot /mnt watch -n1 cat /etc/zfs/zfs-list.cache/bpool
+  chroot /mnt /usr/bin/env bpoolName=${bpoolName} watch -n1 cat /etc/zfs/zfs-list.cache/${bpoolName}
   innerSeperator "When you see changes on the screen [ Ctrl + C ]"
   sleep 3
-  chroot /mnt watch -n1 cat /etc/zfs/zfs-list.cache/rpool
+  chroot /mnt /usr/bin/env rpoolName=${rpoolName} watch -n1 cat /etc/zfs/zfs-list.cache/${rpoolName}
   innerSeperator "Chroot get the zed application and exit [ Ctrl + C ]"
   chroot /mnt pkill -15 zed
 
@@ -592,7 +649,7 @@ function addNewUserToBaseSystem {
   if [ ! "\${username}" == "n" ] || [ ! "\${username}" == "N" ]; then
     innerSeperator "The username is : \${username}"
     innerSeperator "ZFS Create \${username} 's pool"
-    zfs create rpool/home/\${username}
+    zfs create ${rpoolName}/home/\${username}
     chown -R \${username}:\${username} /home/\${username}
     adduser "\${username}"
     cp -a /etc/skel/. /home/\${username}
@@ -626,8 +683,8 @@ EOF
 
 function chrootTakeInitialSnapshots {
   dividerLine "Chroot take initial snapshots"
-  chroot /mnt zfs snapshot bpool/BOOT/debian@initial
-  chroot /mnt zfs snapshot rpool/ROOT/debian@initial
+  chroot /mnt /usr/bin/env bpoolName=${bpoolName} zfs snapshot ${bpoolName}/BOOT/debian@initial
+  chroot /mnt /usr/bin/env rpoolName=${rpoolName} zfs snapshot ${rpoolName}/ROOT/debian@initial
 
   stepByStep "chrootTakeInitialSnapshots"
 }
@@ -640,9 +697,9 @@ function unmountAllFilesystems {
 }
 
 function exportZfsPools {
-  dividerLine "Export all ZFS Pools"
-  chroot /mnt zpool export -af
-  zpool export -af
+  dividerLine "Export ZFS Pools"
+  zpool export -f "${bpoolName}"
+  zpool export -f "${rpoolName}"
 
   stepByStep "exportZfsPools"
 }
@@ -663,12 +720,15 @@ function rebootSystem {
 amiAllowed
 aptSourcesHttp
 installBaseApps
+aptSourcesHttps
+aptUpdateUpgrade
 selectInstallationDisk
 #listDisks
 swapsOffline
 checkMdadmArray
 clearupOldZfs
 uefiPartitioning
+checkSystemHaveZfsPool
 createBootPool
 createRootPool
 createPoolsAndMounts
