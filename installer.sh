@@ -512,11 +512,11 @@ Disks on System\t: ${DISKS_EXCEPT_SYSTEM_DISK[*]}
         POOL_PARTED_DISKS+=("${SELECTED_DISKS[$count]}")
       fi
 
-      if [[ $d -eq 0 ]] && [ "${RAID_TAGS[$selectedRaid]}" == "mirror" ]; then
+      if [[ $a -eq 1 ]] && [ "${RAID_TAGS[$selectedRaid]}" == "mirror" ]; then
         BOOT_PARTED_DISKS+=("${SELECTED_DISKS[$count]}")
       fi
 
-      if [[ $d -gt 0 ]] && [ "${RAID_TAGS[$selectedRaid]}" == "mirror" ]; then
+      if [[ $a -gt 1 ]] && [ "${RAID_TAGS[$selectedRaid]}" == "mirror" ]; then
         POOL_PARTED_DISKS+=("${SELECTED_DISKS[$count]}")
       fi
 
@@ -692,17 +692,6 @@ function getPartUUIDofDisks() {
   stepByStep "getPartUUIDofDisks"
 }
 
-selectSystemDisk
-selectRaidType
-selectInstallationDisks
-labelClear
-wipeDisks
-createPartitions
-labelClear  # if ZFS installed before on that partition, it's there, clean it again.
-getPartUUIDofDisks
-
-exit 0
-
 function swapsOffline() {
   dividerLine "All swaps off!"
   swapoff --all
@@ -808,7 +797,18 @@ function checkSystemHaveZfsPool() {
 }
 
 function createBootPool() {
+#  BOOT_POOLS_PARTITIONS_PARTUUID
+
   dividerLine "Creating BOOT pool"
+
+for i in "${BOOT_POOLS_PARTITIONS_PARTUUID[@]}"; do
+  echo -e "$i"
+done
+
+echo "${BOOT_POOLS_PARTITIONS_PARTUUID[*]}"
+
+exit
+
   if [ -L "${DISK}"-part3 ]; then
     zpool create -f \
       -o cachefile=/etc/zfs/zpool.cache \
@@ -829,7 +829,7 @@ function createBootPool() {
       -O acltype=posixacl -O canmount=off -O compression=lz4 \
       -O devices=off -O normalization=formD -O relatime=on -O xattr=sa \
       -O mountpoint=/boot -R /mnt \
-      "${bPoolName}" "${DISK}"-part3
+      "${bPoolName}" "${BOOT_POOLS_PARTITIONS_PARTUUID}"-part3
 
     innerSeperator "Listing ZFS Filesystem"
     zfs list -t filesystem
@@ -842,6 +842,17 @@ function createBootPool() {
   stepByStep "createBootPool"
 }
 
+selectSystemDisk
+selectRaidType
+selectInstallationDisks
+labelClear
+wipeDisks
+createPartitions
+labelClear  # if ZFS installed before on that partition, it's there, clean it again.
+getPartUUIDofDisks
+createBootPool
+
+exit 0
 function createRootPool() {
   dividerLine "Creating ROOT pool"
 
@@ -1266,14 +1277,21 @@ aptSourcesHttp
 installBaseApps
 aptSourcesHttps
 aptUpdateUpgrade
-selectPoolNames
-selectInstallationDisk
-#listDisks
+
+selectSystemDisk
+selectRaidType
+selectInstallationDisks
+labelClear
+wipeDisks
+createPartitions
+labelClear  # if ZFS installed before on that partition same name, it's there, clear it again.
+getPartUUIDofDisks
+
 swapsOffline
 checkMdadmArray
-clearupOldZfs
-uefiPartitioning
+selectPoolNames
 checkSystemHaveZfsPool
+
 createBootPool
 createRootPool
 createPoolsAndMounts
