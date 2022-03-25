@@ -420,10 +420,10 @@ e.g (sda sdb sdc sdd ...) input dev names with space,
 
 -----
 
-*** First disk's of the array has boot partition and boot pool,
+*** All disks of 1st array has boot partition and boot pool.
 
-*** mirror (raid1 or raid10) configuration is exception,
-all disks of 1st array has boot partition and boot pool.
+*** striped (raid0 and all striped) configurations is exception,
+First disk of the array has boot partition and boot pool,
 \n"
 
   innerSeperator "Disk By Dev Name"
@@ -504,19 +504,23 @@ Disks on System\t: ${DISKS_EXCEPT_SYSTEM_DISK[*]}
   for a in $(seq 1 $x); do
     for d in $(seq 0 $((settedupDiskCount / x - 1))); do
 
-      if [[ $d -eq 0 ]] && [ "${RAID_TAGS[$selectedRaid]}" != "mirror" ]; then
+      if [[ $a -eq 1 ]] && [ "${RAID_TAGS[$selectedRaid]}" != "" ]; then
         BOOT_PARTED_DISKS+=("${SELECTED_DISKS[$count]}")
       fi
 
-      if [[ $d -gt 0 ]] && [ "${RAID_TAGS[$selectedRaid]}" != "mirror" ]; then
+      if [[ $a -gt 1 ]] && [ "${RAID_TAGS[$selectedRaid]}" != "" ]; then
         POOL_PARTED_DISKS+=("${SELECTED_DISKS[$count]}")
       fi
 
-      if [[ $a -eq 1 ]] && [ "${RAID_TAGS[$selectedRaid]}" == "mirror" ]; then
+      if [[ $a -eq 1 ]] && [[ $d -eq 0 ]] && [ "${RAID_TAGS[$selectedRaid]}" == "" ]; then
         BOOT_PARTED_DISKS+=("${SELECTED_DISKS[$count]}")
       fi
 
-      if [[ $a -gt 1 ]] && [ "${RAID_TAGS[$selectedRaid]}" == "mirror" ]; then
+      if [[ $a -eq 1 ]] && [[ $d -gt 0 ]] && [ "${RAID_TAGS[$selectedRaid]}" == "" ]; then
+        POOL_PARTED_DISKS+=("${SELECTED_DISKS[$count]}")
+      fi
+
+      if [[ $a -gt 1 ]] && [[ $d -gt 0 ]] && [ "${RAID_TAGS[$selectedRaid]}" == "" ]; then
         POOL_PARTED_DISKS+=("${SELECTED_DISKS[$count]}")
       fi
 
@@ -541,6 +545,9 @@ Disks on System\t: ${DISKS_EXCEPT_SYSTEM_DISK[*]}
   ;;
   esac
 
+  ARRAY_COUNT=$x
+  export ARRAY_COUNT
+  export BOOT_PARTED_DISKS
   stepByStep "selectInstallationDisks"
 }
 
@@ -646,19 +653,19 @@ function getPartUUIDofDisks() {
 
   for i in "${BOOT_PARTED_DISKS[@]}"; do
     # Get Boot Partitions of disk
-    BOOT_PARTITIONS+=("${i}2")
+    BOOT_PARTITIONS+=("/dev/${i}2")
     partUuidvalue=$(blkid -s PARTUUID -o value "/dev/${i}2")
     BOOT_PARTITIONS_PARTUUID+=("${partUuidvalue}")
     innerSeperator "PARTUUID of /dev/${i}2\t${partUuidvalue}"
 
     # Get Boot Pools of disk
-    BOOT_POOLS_PARTITIONS+=("${i}3")
+    BOOT_POOLS_PARTITIONS+=("/dev/${i}3")
     partUuidvalue=$(blkid -s PARTUUID -o value "/dev/${i}3")
     BOOT_POOLS_PARTITIONS_PARTUUID+=("${partUuidvalue}")
     innerSeperator "PARTUUID of /dev/${i}3\t${partUuidvalue}"
 
     # Get Root Pools of disk
-    ROOT_PARTITIONS+=("${i}4")
+    ROOT_PARTITIONS+=("/dev/${i}4")
     partUuidvalue=$(blkid -s PARTUUID -o value "/dev/${i}4")
     ROOT_PARTITIONS_PARTUUID+=("${partUuidvalue}")
     innerSeperator "PARTUUID of /dev/${i}4\t${partUuidvalue}"
@@ -670,7 +677,7 @@ function getPartUUIDofDisks() {
 
   for i in "${POOL_PARTED_DISKS[@]}"; do
     # Get Pool Partitions of disk
-    POOL_PARTITIONS+=("${i}1")
+    POOL_PARTITIONS+=("/dev/${i}1")
     partUuidvalue=$(blkid -s PARTUUID -o value "/dev/${i}1")
     POOL_PARTITIONS_PARTUUID+=("${partUuidvalue}")
     innerSeperator "PARTUUID of /dev/${i}1\t${partUuidvalue}"
@@ -703,8 +710,8 @@ function checkMdadmArray() {
   MDADM_CHECK=$(
     cat <<EOF
 mdadm --stop /dev/md0							# If so, stop them (replace $()md0$() as required):
-mdadm --zero-superblock --force ${DISK}			# For an array using the whole disk:
-mdadm --zero-superblock --force ${DISK}-part2	# For an array using a partition:
+mdadm --zero-superblock --force /dev/sdX			# For an array using the whole disk:
+mdadm --zero-superblock --force /dev/sdX2     # For an array using a partition:
 EOF
   )
   echo -e "${MDADM_CHECK}"
@@ -799,76 +806,72 @@ function checkSystemHaveZfsPool() {
 function createBootPool() {
 #  BOOT_POOLS_PARTITIONS_PARTUUID
 
+  settedupDiskCount=${#BOOT_POOLS_PARTITIONS_PARTUUID[@]}
+
+  count=0
+  setupString="${bPoolName} ${RAID_TAGS[$selectedRaid]} "
+  for d in $(seq 0 $settedupDiskCount ); do
+    setupString+="${BOOT_POOLS_PARTITIONS_PARTUUID[$count]} "
+    count=$((count + 1))
+  done
+
   dividerLine "Creating BOOT pool"
+  innerSeperator "${setupString}"
 
-for i in "${BOOT_POOLS_PARTITIONS_PARTUUID[@]}"; do
-  echo -e "$i"
-done
+  zpool create \
+    -o cachefile=/etc/zfs/zpool.cache \
+    -o ashift=12 -d \
+    -o feature@async_destroy=enabled \
+    -o feature@bookmarks=enabled \
+    -o feature@embedded_data=enabled \
+    -o feature@empty_bpobj=enabled \
+    -o feature@enabled_txg=enabled \
+    -o feature@extensible_dataset=enabled \
+    -o feature@filesystem_limits=enabled \
+    -o feature@hole_birth=enabled \
+    -o feature@large_blocks=enabled \
+    -o feature@livelist=enabled \
+    -o feature@lz4_compress=enabled \
+    -o feature@spacemap_histogram=enabled \
+    -o feature@zpool_checkpoint=enabled \
+    -O acltype=posixacl -O canmount=off -O compression=lz4 \
+    -O devices=off -O normalization=formD -O relatime=on -O xattr=sa \
+    -O mountpoint=/boot -R /mnt \
+    ${setupString}
 
-echo "${BOOT_POOLS_PARTITIONS_PARTUUID[*]}"
-
-exit
-
-  if [ -L "${DISK}"-part3 ]; then
-    zpool create -f \
-      -o cachefile=/etc/zfs/zpool.cache \
-      -o ashift=12 -d \
-      -o feature@async_destroy=enabled \
-      -o feature@bookmarks=enabled \
-      -o feature@embedded_data=enabled \
-      -o feature@empty_bpobj=enabled \
-      -o feature@enabled_txg=enabled \
-      -o feature@extensible_dataset=enabled \
-      -o feature@filesystem_limits=enabled \
-      -o feature@hole_birth=enabled \
-      -o feature@large_blocks=enabled \
-      -o feature@livelist=enabled \
-      -o feature@lz4_compress=enabled \
-      -o feature@spacemap_histogram=enabled \
-      -o feature@zpool_checkpoint=enabled \
-      -O acltype=posixacl -O canmount=off -O compression=lz4 \
-      -O devices=off -O normalization=formD -O relatime=on -O xattr=sa \
-      -O mountpoint=/boot -R /mnt \
-      "${bPoolName}" "${BOOT_POOLS_PARTITIONS_PARTUUID}"-part3
-
-    innerSeperator "Listing ZFS Filesystem"
-    zfs list -t filesystem
-  else
-    dividerLine "There must be an error! can't find : ${DISK}-part3"
-    lsblk
-    exit 1
-  fi
+  innerSeperator "Listing ZFS Filesystem"
+  zfs list -t filesystem
 
   stepByStep "createBootPool"
 }
 
-selectSystemDisk
-selectRaidType
-selectInstallationDisks
-labelClear
-wipeDisks
-createPartitions
-labelClear  # if ZFS installed before on that partition, it's there, clean it again.
-getPartUUIDofDisks
-createBootPool
-
-exit 0
 function createRootPool() {
+
+  mergedArray=("${ROOT_PARTITIONS_PARTUUID[@]}")
+  mergedArray+=("${POOL_PARTITIONS_PARTUUID[@]}")
+  settedupDiskCount="${#mergedArray[@]}"
+
+  count=0
+  setupString="${rPoolName} "
+  for a in $(seq 1 $ARRAY_COUNT); do
+    setupString+="${RAID_TAGS[$selectedRaid]} "
+    for d in $(seq 0 $((settedupDiskCount / ARRAY_COUNT - 1))); do
+      setupString+="${mergedArray[$count]} "
+      count=$((count + 1))
+    done
+  done
+
   dividerLine "Creating ROOT pool"
+  innerSeperator "${setupString}"
 
-  if [ -L "${DISK}"-part4 ]; then
-    zpool create -f \
-      -o ashift=12 -O acltype=posixacl -O canmount=off -O compression=lz4 \
-      -O dnodesize=auto -O normalization=formD -O relatime=on \-O xattr=sa \
-      -O mountpoint=/ -R /mnt "${rPoolName}" "${DISK}"-part4
+  zpool create \
+    -o ashift=12 -O acltype=posixacl -O canmount=off -O compression=lz4 \
+    -O dnodesize=auto -O normalization=formD -O relatime=on \-O xattr=sa \
+    -O mountpoint=/ -R /mnt \
+    ${setupString}
 
-    innerSeperator "Listing ZFS Filesystem"
-    zfs list -t filesystem
-  else
-    dividerLine "There must be an error! can't find : ${DISK}-part4"
-    lsblk
-    exit 1
-  fi
+  innerSeperator "Listing ZFS Filesystem"
+  zfs list -t filesystem
 
   stepByStep "createRootPool"
 }
@@ -935,14 +938,19 @@ function createPoolsAndMounts() {
 
 function installBaseSystem() {
   dividerLine "Installing Debian bullseye base system !"
-  debootstrap bullseye /mnt
-
+  if [ -f "/root/debootstrap/bullseye.tar.gz" ]; then
+    tar -xvzf /root/debootstrap/bullseye.tar.gz -C /mnt/
+  else
+    debootstrap bullseye /mnt
+  fi
   stepByStep "installBaseSystem"
 }
 
 function copyPoolCache() {
   dividerLine "Copy pool cache to base system"
-  mkdir /mnt/etc/zfs
+  if [ ! -d /mnt/etc/zfs ]; then
+    mkdir /mnt/etc/zfs
+  fi
   cp /etc/zfs/zpool.cache /mnt/etc/zfs/
 
   stepByStep "copyPoolCache"
@@ -968,6 +976,11 @@ auto eth0
 iface eth0 inet dhcp
 EOF
   )
+
+  if [ ! -d /mnt/etc/network/interfaces.d/ ]; then
+    mkdir /mnt/etc/network/interfaces.d/
+  fi
+
   echo -e "${CHANGE_NET_IF}" >/mnt/etc/network/interfaces.d/eth0
 
   stepByStep "changeNetworkConfOfBaseSystem"
@@ -1042,6 +1055,10 @@ function chrootInstallKernelHeaders() {
 }
 
 function chrootWriteUefiPart() {
+#BOOT_PARTED_DISKS
+#BOOT_PARTITIONS
+#BOOT_PARTITIONS_PARTUUID
+
   dividerLine "Chroot Write UEFI boot"
 
   innerSeperator "Grub Probe [ you should see 'zfs']"
@@ -1080,7 +1097,7 @@ function chrootCreateRootPassword() {
 
 function chrootImportBpoolService() {
   dividerLine "Chroot Create and enable Bpool service"
-  export BPOOL_SERVICE=$(
+  BPOOL_SERVICE=$(
     cat <<EOF
 [Unit]
 DefaultDependencies=no
@@ -1278,6 +1295,9 @@ installBaseApps
 aptSourcesHttps
 aptUpdateUpgrade
 
+selectPoolNames
+checkSystemHaveZfsPool
+
 selectSystemDisk
 selectRaidType
 selectInstallationDisks
@@ -1289,9 +1309,6 @@ getPartUUIDofDisks
 
 swapsOffline
 checkMdadmArray
-selectPoolNames
-checkSystemHaveZfsPool
-
 createBootPool
 createRootPool
 createPoolsAndMounts
