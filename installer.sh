@@ -99,6 +99,7 @@ function stepByStep() {
 }
 
 function aptSourcesHttp() {
+  dividerLine "APT Sources HTTP"
   if [ ! -z $1 ]; then
     echo -e "${APT_SOURCES_HTTP}" >/mnt/etc/apt/sources.list
   else
@@ -109,6 +110,7 @@ function aptSourcesHttp() {
 }
 
 function aptSourcesHttps() {
+  dividerLine "APT Sources HTTPS"
   if [ ! -z $1 ]; then
     echo -e "${APT_SOURCES_HTTPS}" >/mnt/etc/apt/sources.list
   else
@@ -123,18 +125,18 @@ function aptUpdateUpgrade() {
   apt -qqq update -y
   apt -qq upgrade -y
   apt -qq autoremove -y
+  stepByStep "aptUpdateUpgrade"
 }
 
 function installBaseApps() {
-  dividerLine "Base Applications Installation"
+  dividerLine "System ZFS Build Applications Installation"
   apt -qqq update -y
-  yes | apt -qq install -y bash-completion debootstrap dpkg-dev dkms gdisk parted zfsutils-linux mdadm ovmf
+  apt -qq install -y bash-completion debootstrap dpkg-dev dkms gdisk parted mdadm ovmf
+  apt -qq install -y zfsutils-linux
   modprobe zfs
 
   stepByStep "installBaseApps"
 }
-
-#------------------------------------------------ from here
 
 function selectSystemDisk() {
   dividerLine "Selecting System Disk"
@@ -150,7 +152,7 @@ function selectSystemDisk() {
     return
   fi
 
-  checkIsThereAdisk=$(lsblk | grep -Po "^[a-z0-9]{3,}")
+  checkIsThereAdisk=$(lsblk | grep -v -P "sr[0-9]+" | grep -Po "^[a-z0-9]{3,}")
   thereIs=0
   for i in $checkIsThereAdisk; do
     if [ $i == "${SYSTEM_DISK}" ]; then
@@ -161,7 +163,7 @@ function selectSystemDisk() {
   if [[ $thereIs -eq 0 ]]; then
     dividerLine "There is no such a disk like ${SYSTEM_DISK}"
     unset SYSTEM_DISK
-    sleep 2
+    sleep 3
     selectSystemDisk
     return
   fi
@@ -177,30 +179,40 @@ function selectSystemDisk() {
   fi
 
   #  dividerLine "Disks Except System Disk"
-  disksExceptSystemDisk=$(lsblk | grep -v "${SYSTEM_DISK}" | grep -Po '^[a-z]+')
-  DISK_COUNT=0
+  disksExceptSystemDisk=$(lsblk | grep -v -P "sr[0-9]+" | grep -v "${SYSTEM_DISK}" | grep -Po '^[a-z]+')
 
-  #  innerSeperator "Disk Name\tDisk by-path\t\t\tDisk by-id"
   DISKS_EXCEPT_SYSTEM_DISK=()
-  DISKS_EXCEPT_SYSTEM_DISK_BY_PATH=()
   DISKS_EXCEPT_SYSTEM_DISK_BY_ID=()
 
+#  innerSeperator "Disk Name\tDisk by-path\t\t\tDisk by-id"
+  DISK_COUNT=0
   for i in ${disksExceptSystemDisk}; do
-    diskBypath=$(ls -l /dev/disk/by-path/ | grep -v "part[0-9]*" | grep -P "$i" | awk '{print $9}')
     diskById=$(ls -l /dev/disk/by-id/ | grep -v "part[0-9]*" | grep -P "$i" | awk '{print $9}')
-    DISKS_EXCEPT_SYSTEM_DISK+=("$i")
-    DISKS_EXCEPT_SYSTEM_DISK_BY_PATH+=("${diskBypath}")
     DISKS_EXCEPT_SYSTEM_DISK_BY_ID+=("${diskById}")
-    #    echo -e " $DISK_COUNT : $i\t${diskBypath}\t${diskById}"
+#    echo -e " $DISK_COUNT : $i\t${diskBypath}\t${diskById}"
     DISK_COUNT=$((DISK_COUNT + 1))
   done
   innerSeperator "Total : ( $DISK_COUNT ) disks except System Disk (${SYSTEM_DISK})"
+
+  IFS=$'\n' sorted=($(sort <<<"${DISKS_EXCEPT_SYSTEM_DISK_BY_ID[*]}"))
+  unset IFS
+  DISKS_EXCEPT_SYSTEM_DISK_BY_ID=("${sorted[@]}")
+
+  for i in "${DISKS_EXCEPT_SYSTEM_DISK_BY_ID[@]}"; do
+    DISKS_EXCEPT_SYSTEM_DISK+=($(ls -l /dev/disk/by-id/$i | grep -iPo "[a-z]{3,}$"))
+  done
 
   export SYSTEM_DISK
   export DISK_COUNT
   export DISKS_EXCEPT_SYSTEM_DISK
   export DISKS_EXCEPT_SYSTEM_DISK_BY_ID
-  export DISKS_EXCEPT_SYSTEM_DISK_BY_PATH
+
+  innerSeperator "Disk Name\t\tDisk by-id"
+  cnt=0
+  for i in "${DISKS_EXCEPT_SYSTEM_DISK_BY_ID[@]}"; do
+    echo -e "$cnt : ${DISKS_EXCEPT_SYSTEM_DISK[$cnt]}\t\t\t${DISKS_EXCEPT_SYSTEM_DISK_BY_ID[$cnt]}"
+    cnt=$((cnt+1))
+  done
 
   stepByStep "selectSystemDisk"
 }
@@ -428,15 +440,13 @@ First disk of the array has boot partition and boot pool,
 
   innerSeperator "Disk By Dev Name"
   for i in $(seq 0 $((${#DISKS_EXCEPT_SYSTEM_DISK[@]} - 1))); do
-    #    echo -e "$i : ${DISKS_EXCEPT_SYSTEM_DISK[$i]}\t${DISKS_EXCEPT_SYSTEM_DISK_BY_PATH[$i]}\t${DISKS_EXCEPT_SYSTEM_DISK_BY_ID[$i]}"
-    echo -e "$i : ${DISKS_EXCEPT_SYSTEM_DISK[$i]}\n"
+    echo -e "$i : ${DISKS_EXCEPT_SYSTEM_DISK[$i]}\t\t${DISKS_EXCEPT_SYSTEM_DISK_BY_ID[$i]}\n"
   done
 
   #  echo -e "${DISKS_EXCEPT_SYSTEM_DISK[@]}"
-  #  echo -e "${DISKS_EXCEPT_SYSTEM_DISK_BY_PATH[@]}"
   #  echo -e "${DISKS_EXCEPT_SYSTEM_DISK_BY_ID[@]}"
 
-  read -r -p "Select Installation Disks ($settedupDiskCount of them) [ Enter / input ] : " selectedDisks
+  read -r -p "Select Installation Disks ($settedupDiskCount of them, use sdX names) [ Enter / input ] : " selectedDisks
 
   # first time, seperated. After partition part UUID
   BOOT_PARTED_DISKS=()
@@ -555,7 +565,7 @@ function labelClear() {
   dividerLine "ZFS Label Clear If Exist on Selected Disks"
 
   for i in "${BOOT_PARTED_DISKS[@]}"; do
-    for d in $(lsblk | grep -iPo "${i}[0-9]+"); do
+    for d in $(lsblk | grep -v -P "sr[0-9]+" | grep -iPo "${i}[0-9]+"); do
       innerSeperator "ZFS Label Clear on /dev/$d"
       zpool labelclear -f "/dev/$d"
       echo -e "\n"
@@ -563,7 +573,7 @@ function labelClear() {
   done
 
   for i in "${POOL_PARTED_DISKS[@]}"; do
-    for d in $(lsblk | grep -iPo "${i}[0-9]+"); do
+    for d in $(lsblk | grep -v -P "sr[0-9]+" | grep -iPo "${i}[0-9]+"); do
       innerSeperator "ZFS Label Clear on /dev/$d"
       zpool labelclear -f "/dev/$d"
       echo -e "\n"
@@ -938,8 +948,11 @@ function createPoolsAndMounts() {
 
 function installBaseSystem() {
   dividerLine "Installing Debian bullseye base system !"
-  if [ -f "/root/debootstrap/bullseye.tar.gz" ]; then
-    tar -xvzf /root/debootstrap/bullseye.tar.gz -C /mnt/
+  sleep 2
+  if [ -f "/root/debootstrap/bullseye_clean.tar.gz" ]; then
+    tar -xvpzf /root/debootstrap/bullseye_clean.tar.gz -C /mnt/
+  elif [ -f "/root/debootstrap/bullseye.tar.gz" ]; then
+    tar -xvpzf /root/debootstrap/bullseye.tar.gz -C /mnt/
   else
     debootstrap bullseye /mnt
   fi
@@ -1024,8 +1037,9 @@ function chrootAutoremove() {
 
 function chrootInstallBaseApps() {
   dividerLine "Apt install chrooted system's applications"
-  chroot /mnt apt -qq install -y sudo parted htop screen bash-completion apt-transport-https openssh-server \
-    ca-certificates console-setup locales dosfstools grub-efi-amd64 shim-signed gdisk
+  chroot /mnt apt -qq install -y sudo parted htop screen net-tools dnsutils whois curl wget bash-completion \
+    apt-transport-https openssh-server ca-certificates console-setup locales dosfstools grub-efi-amd64 \
+    shim-signed gdisk iproute2 mdadm ovmf lsof
 
   stepByStep "chrootInstallBaseApps"
 }
@@ -1047,6 +1061,7 @@ function chrootDpkgReconfigure() {
 function chrootInstallKernelHeaders() {
   dividerLine "Chroot Install Kernel headers"
   chroot /mnt apt -qq install -y dpkg-dev linux-headers-amd64 linux-image-amd64
+  chroot /mnt apt -qq install -y dkms
   chroot /mnt apt -qq install -y zfs-initramfs
 
   chroot /mnt echo REMAKE_INITRD=yes >/etc/dkms/zfs.conf
@@ -1063,24 +1078,27 @@ function chrootWriteUefiPart() {
 
   innerSeperator "Grub Probe [ you should see 'zfs']"
   innerSeperator $(chroot /mnt grub-probe /boot)
+  read -p " [ Enter ] " keypress
+
   lsblk
   innerSeperator "mkdosfs EFI part"
-  chroot /mnt /usr/bin/env DISK="${DISK}" mkdosfs -F 32 -s 1 -n EFI ${DISK}-part2
+  partUuid=${BOOT_PARTITIONS_PARTUUID[0]}
+  export partUuid
+  chroot /mnt /bin/bash -c 'echo "/dev/disk/by-partuuid/$partUuid"; mkdosfs -F 32 -s 1 -n EFI /dev/disk/by-partuuid/$partUuid'
+  read -p " [ Enter ] " keypress
+
   innerSeperator "Create /boot/efi"
   chroot /mnt mkdir /boot/efi
+  read -p " [ Enter ] " keypress
+
   innerSeperator "Write /etc/fstab"
-  #  chroot /mnt /usr/bin/env DISK="${DISK}" echo -e ${DISK}-part2" /boot/efi vfat defaults 0 0" >> /etc/fstab
-  #bootEfiUuid=$(blkid -s UUID -o value ${DISK}-part2)
-  bootEfiUuid=$(blkid -s PARTUUID -o value ${DISK}-part2)
-  if [ ! -z "${bootEfiUuid}" ]; then
-    innerSeperator "PARTUUID : ${bootEfiUuid}"
-    echo -e "PARTUUID=\"${bootEfiUuid}\" /boot/efi vfat defaults 0 0" >>/mnt/etc/fstab
-  else
-    innerSeperator "DISK BY  ID : ${DISK}-part2"
-    echo -e "${DISK}-part2 /boot/efi vfat defaults 0 0" >>/mnt/etc/fstab
-  fi
+  chroot /mnt echo -e "PARTUUID=\"${BOOT_PARTITIONS_PARTUUID[0]}\" /boot/efi vfat defaults 0 0" >> /mnt/etc/fstab
+  unset partUuid
+
   innerSeperator "Mount EFI"
   chroot /mnt mount /boot/efi
+  read -p " [ Enter ] " keypress
+
   innerSeperator "Purge os-prober [ Dual boot systems don't needed ]"
   chroot /mnt apt remove -y --purge os-prober
 
@@ -1140,12 +1158,14 @@ function chrootChangeGrubDefaults() {
   chroot /mnt sed -i 's/GRUB_TIMEOUT=5/GRUB_TIMEOUT=2/g' /etc/default/grub
   chroot /mnt sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet"/GRUB_CMDLINE_LINUX_DEFAULT="console"/g' /etc/default/grub
   chroot /mnt /usr/bin/env rPoolName=${rPoolName} sed -i 's/GRUB_CMDLINE_LINUX=""/GRUB_CMDLINE_LINUX="root=ZFS='${rPoolName}'\/ROOT\/debian net.ifnames=0 biosdevname=0"/g' /etc/default/grub
+  chroot /mnt echo -e "GRUB_SAVEDEFAULT=false\nGRUB_DEFAULT=saved" >> /etc/default/grub
   chroot /mnt update-grub
 
   stepByStep "chrootChangeGrubDefaults"
 }
 
 function chrootGrubInstall() {
+  # after reboot all boot disks...
   dividerLine "Chroot grub install"
   chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck --no-floppy
 
@@ -1253,6 +1273,12 @@ EOF
   stepByStep "afterReboot"
 }
 
+function copyZfsCompletion {
+  dividerLine "Copy zfs bash completion to zpool | Activates zpool completion"
+  chroot /mnt cp /usr/share/bash-completion/completions/zfs /usr/share/bash-completion/completions/zpool
+  stepByStep "copyZfsCompletion"
+}
+
 function chrootTakeInitialSnapshots() {
   dividerLine "Chroot take initial snapshots"
   chroot /mnt /usr/bin/env bPoolName=${bPoolName} zfs snapshot ${bPoolName}/BOOT/debian@initial
@@ -1263,15 +1289,18 @@ function chrootTakeInitialSnapshots() {
 
 function unmountAllFilesystems() {
   dividerLine "Unmount all ZFS /mnt partitions"
+
   mount | grep -v zfs | tac | awk '/\/mnt/ {print $3}' | xargs -i{} umount -lf {} # LiveCD environment to unmount all filesystems
+  zfs unmount -a
 
   stepByStep "unmountAllFilesystems"
 }
 
 function exportZfsPools() {
   dividerLine "Export ZFS Pools"
-  zpool export -f "${bPoolName}"
-  zpool export -f "${rPoolName}"
+
+  zpool export "${bPoolName}"
+  zpool export "${rPoolName}"
 
   stepByStep "exportZfsPools"
 }
@@ -1287,17 +1316,14 @@ function rebootSystem() {
   stepByStep "rebootSystem"
 }
 
-#chroot /mnt /usr/bin/env DISK=$DISK bash --login
 ##### START #####
 amiAllowed
 aptSourcesHttp
 installBaseApps
 aptSourcesHttps
 aptUpdateUpgrade
-
 selectPoolNames
 checkSystemHaveZfsPool
-
 selectSystemDisk
 selectRaidType
 selectInstallationDisks
@@ -1306,7 +1332,6 @@ wipeDisks
 createPartitions
 labelClear  # if ZFS installed before on that partition same name, it's there, clear it again.
 getPartUUIDofDisks
-
 swapsOffline
 checkMdadmArray
 createBootPool
@@ -1338,6 +1363,7 @@ chrootGrubInstall
 chrootZfsListCaches
 chrootChangeMntDir
 afterReboot
+copyZfsCompletion
 chrootTakeInitialSnapshots
 unmountAllFilesystems
 exportZfsPools
