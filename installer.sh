@@ -140,7 +140,7 @@ function installBaseApps() {
 
 function selectSystemDisk() {
   dividerLine "Selecting System Disk"
-  lsblk
+  lsblk | grep -v -P "sr[0-9]+"
   echo -e "\n"
   read -r -p "Select the system disk wich is you are using right now e.g ( sda | vda ) without /dev/ : " SYSTEM_DISK
 
@@ -709,6 +709,52 @@ function getPartUUIDofDisks() {
   stepByStep "getPartUUIDofDisks"
 }
 
+function cloneableUefiPart() {
+
+  BOOT_DISK_PARTUUID="/dev/disk/by-partuuid/${BOOT_PARTITIONS_PARTUUID[0]}"
+  BOOT_CLONES=()
+
+  count=$((${#BOOT_PARTITIONS_PARTUUID[@]} - 1))
+  for i in $(seq 1 $count); do
+    BOOT_CLONES+=("/dev/disk/by-partuuid/${BOOT_PARTITIONS_PARTUUID[$i]}")
+  done
+
+  export BOOT_DISK_PARTUUID
+  export BOOT_CLONES
+}
+
+function cloneUefiPartFunctionBuilder() {
+  if [[ "${#BOOT_CLONES[@]}" -gt 0 ]]; then
+    CLONE_FUNCTION=$(cat <<EOF
+
+function cloneUefiPart() {
+  dividerLine "Clone UEFI Partition"
+
+  umount /boot/efi
+  count=2
+  PARTITIONS=(${BOOT_CLONES[@]})
+  for i in \${PARTITIONS[@]}; do
+    dd if=${BOOT_DISK_PARTUUID} of=\$i status=progress
+    sync
+    sleep 0.5
+    disk=\$(ls -l \$i | grep -iPo "[a-z]+[0-9]+$" | grep -Po "[a-z]+")
+    diskById=\$(ls -l /dev/disk/by-id/ | grep -P "\$disk$" | awk '{print \$9}')
+    efibootmgr -c -g -d /dev/\$disk -p 2 -L "debian-\$count" -l '\\\EFI\debian\grubx64.efi'
+    sleep 0.5
+    count=\$((count + 1))
+  done
+  mount /boot/efi
+}
+
+EOF
+)
+  else
+    CLONE_FUNCTION=""
+  fi
+
+  export CLONE_FUNCTION
+}
+
 function swapsOffline() {
   dividerLine "All swaps off!"
   swapoff --all
@@ -748,7 +794,12 @@ function selectPoolNames() {
 
   export bPoolName
   export rPoolName
-  innerSeperator "Boot Pool name is : ${bPoolName}\n\tRoot Pool name is : ${rPoolName}"
+  innerSeperator "
+Boot Pool name is : ${bPoolName}
+Root Pool name is : ${rPoolName}
+"
+
+  stepByStep "selectPoolNames"
 }
 
 function setBpoolName() {
@@ -811,6 +862,8 @@ function checkSystemHaveZfsPool() {
       setRpoolName
     fi
   fi
+
+  stepByStep "checkSystemHaveZfsPool"
 }
 
 function createBootPool() {
@@ -828,7 +881,7 @@ function createBootPool() {
   dividerLine "Creating BOOT pool"
   innerSeperator "${setupString}"
 
-  zpool create \
+  zpool create -f \
     -o cachefile=/etc/zfs/zpool.cache \
     -o ashift=12 -d \
     -o feature@async_destroy=enabled \
@@ -874,7 +927,7 @@ function createRootPool() {
   dividerLine "Creating ROOT pool"
   innerSeperator "${setupString}"
 
-  zpool create \
+  zpool create -f \
     -o ashift=12 -O acltype=posixacl -O canmount=off -O compression=lz4 \
     -O dnodesize=auto -O normalization=formD -O relatime=on \-O xattr=sa \
     -O mountpoint=/ -R /mnt \
@@ -1215,7 +1268,7 @@ function innerSeperator() {
   echo -e "    \$1"
   echo -e "----------------------------------------------------------------------"
 }
-
+${CLONE_FUNCTION}
 function getUserPassword() {
     read -rs -p "Password : " userPass
     echo ""
@@ -1248,8 +1301,8 @@ function addNewUserToBaseSystem() {
     chown -R \${username}:\${username} /home/\${username}
     usermod -a -G audio,cdrom,dip,floppy,netdev,plugdev,sudo,video \${username}
     innerSeperator "Set user password"
-    getUserPassword
-    echo "\${username}:\${userPass}" | chpasswd
+#    getUserPassword
+#    echo "\${username}:\${userPass}" | chpasswd
     innerSeperator "\${username} 's Password has Changed"
   fi
 }
@@ -1259,6 +1312,8 @@ function startTaskSel() {
   tasksel
 }
 
+cloneUefiPart
+read -p "To Continue [ Enter ] " keypress
 addNewUserToBaseSystem
 startTaskSel
 
@@ -1332,6 +1387,8 @@ wipeDisks
 createPartitions
 labelClear  # if ZFS installed before on that partition same name, it's there, clear it again.
 getPartUUIDofDisks
+cloneableUefiPart
+cloneUefiPartFunctionBuilder
 swapsOffline
 checkMdadmArray
 createBootPool
