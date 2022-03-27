@@ -123,8 +123,11 @@ function aptSourcesHttps() {
 function aptUpdateUpgrade() {
   dividerLine "Apt Update & Upgrade & Autoremove"
   apt -qqq update -y
-  apt -qq upgrade -y
-  apt -qq autoremove -y
+  isAliveSystem=$(lsblk | grep -Po "^loop[0-9]+")
+  if [ -z "${isAliveSystem}" ]; then
+    apt -qq upgrade -y
+    apt -qq autoremove -y
+  fi
   stepByStep "aptUpdateUpgrade"
 }
 
@@ -1269,6 +1272,7 @@ function innerSeperator() {
   echo -e "----------------------------------------------------------------------"
 }
 ${CLONE_FUNCTION}
+
 function getUserPassword() {
     read -rs -p "Password : " userPass
     echo ""
