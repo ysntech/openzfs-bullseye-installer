@@ -87,6 +87,18 @@ function amiAllowed() {
   fi
 }
 
+function getPath {
+	FULL="$1"
+	F_PATH=${FULL%/*}
+	F_BASE=${FULL##*/}
+	F_NAME=${F_BASE%.*}
+	F_EXT=${F_BASE##*.}
+#	echo $F_PATH
+#	echo $F_BASE
+#	echo $F_NAME
+#	echo $F_EXT
+}
+
 function stepByStep() {
   if [[ $STEP_BY_STEP -eq 1 ]]; then
     echo -e "\n"
@@ -942,6 +954,7 @@ function createRootPool() {
   stepByStep "createRootPool"
 }
 
+
 function createPoolsAndMounts() {
   dividerLine "Creating Mount Pools"
 
@@ -956,39 +969,106 @@ function createPoolsAndMounts() {
   innerSeperator "Creating ${bPoolName}/BOOT/debian pool [ EFI system nesting directory]"
   zfs create -o mountpoint=/boot ${bPoolName}/BOOT/debian
 
+
   innerSeperator "Creating ${rPoolName}/home"
   zfs create ${rPoolName}/home
+
   innerSeperator "Creating and mounting ${rPoolName}/home/root to /root"
   zfs create -o mountpoint=/root ${rPoolName}/home/root
   chmod 700 /mnt/root
-  innerSeperator "Creating ${rPoolName}/var"
-  zfs create -o canmount=off ${rPoolName}/var
-  innerSeperator "Creating ${rPoolName}/var/lib"
-  zfs create -o canmount=off ${rPoolName}/var/lib
-  innerSeperator "Creating ${rPoolName}/var/log"
-  zfs create ${rPoolName}/var/log
-  innerSeperator "Creating ${rPoolName}/var/mail"
-  zfs create ${rPoolName}/var/mail
-  innerSeperator "Creating ${rPoolName}/var/www"
-  zfs create ${rPoolName}/var/www
-  innerSeperator "Creating ${rPoolName}/var/spool"
-  zfs create ${rPoolName}/var/spool
-  innerSeperator "Creating ${rPoolName}/var/cache (without auto snapshots)"
-  zfs create -o com.sun:auto-snapshot=false ${rPoolName}/var/cache
-  innerSeperator "Creating ${rPoolName}/var/tmp (without auto snapshots)"
-  zfs create -o com.sun:auto-snapshot=false ${rPoolName}/var/tmp
-  innerSeperator "Setting sticky bit [ 1 ] for /mnt/var/tmp (only owner)"
-  chmod 1777 /mnt/var/tmp
-  innerSeperator "Creating ${rPoolName}/opt"
-  zfs create ${rPoolName}/opt
-  innerSeperator "Creating ${rPoolName}/usr"
-  zfs create -o canmount=off ${rPoolName}/usr
-  innerSeperator "Creating ${rPoolName}/usr/local"
-  zfs create ${rPoolName}/usr/local
-  innerSeperator "Creating ${rPoolName}/var/lib/docker (without auto snapshots)"
-  zfs create -o com.sun:auto-snapshot=false ${rPoolName}/var/lib/docker
-  innerSeperator "Creating ${rPoolName}/var/lib/nfs (without auto snapshots)"
-  zfs create -o com.sun:auto-snapshot=false ${rPoolName}/var/lib/nfs
+
+  stepByStep "createPoolsAndMounts"
+}
+
+function askAndCreateDataset() {
+
+#  echo -e "${DATASET_DIRS[@]}"
+#  echo -e "${DATASET_OPTS[@]}"
+
+  if [[ ${#DATASET_DIRS[@]} -gt 0 ]]; then
+
+    count=0
+    echo -e "----------------------------------------------------------"
+    for i in "${DATASET_DIRS[@]}"; do
+      read -r -p "Create ZFS Dataset ( ${rPoolName}$i ) ? [ Y / n ] " zfsDataset
+        case $zfsDataset in
+        "" | "Y" | "y")
+            echo -e "zfs create ${DATASET_OPTS[$count]} ${rPoolName}$i"
+            zfs create ${DATASET_OPTS[$count]} ${rPoolName}$i
+          ;;
+        "N" | "n")
+          if [[ $count -eq 0 ]]; then
+            return
+          fi
+          ;;
+        *)
+#          selectInstallationDisks
+          return
+          ;;
+        esac
+      count=$((count+1))
+      echo -e "----------------------------------------------------------"
+    done
+  fi
+  unset DATASET_DIRS
+  unset DATASET_OPTS
+}
+
+function createOtherDatasets() {
+  dividerLine "Creating Other ZFS Datasets"
+
+  DATASET_DIRS=("/var" \
+  "/var/lib" \
+  "/var/log"  \
+  "/var/mail"  \
+  "/var/vmail"  \
+  "/var/www"  \
+  "/var/spool"  \
+  "/var/cache"  \
+  "/var/tmp"  \
+  "/var/opt")
+
+  DATASET_OPTS=("-o canmount=off -o mountpoint=none"  \
+  "-o canmount=off"  \
+  ""  \
+  ""  \
+  ""  \
+  "" \
+  ""  \
+  "-o com.sun:auto-snapshot=false"  \
+  "-o com.sun:auto-snapshot=false"  \
+  "")
+  export DATASET_DIRS
+  export DATASET_OPTS
+  askAndCreateDataset
+
+  getPath "/var/lib/docker"
+  upperDir=$(zfs list | grep "${F_PATH}")
+  echo "$upperDir"
+  if [ ! -z "$upperDir" ]; then
+    DATASET_DIRS=("/var/lib/docker" \
+    "/var/lib/nfs")
+    DATASET_OPTS=("-o com.sun:auto-snapshot=false" \
+    "-o com.sun:auto-snapshot=false")
+    export DATASET_DIRS
+    export DATASET_OPTS
+    askAndCreateDataset
+  fi
+
+  DATASET_DIRS=("/opt")
+  DATASET_OPTS=("")
+  export DATASET_DIRS
+  export DATASET_OPTS
+  askAndCreateDataset
+
+  DATASET_DIRS=("/usr" \
+  "/usr/local")
+  DATASET_OPTS=("-o canmount=off" \
+  "")
+  export DATASET_DIRS
+  export DATASET_OPTS
+  askAndCreateDataset
+
   innerSeperator "Creating /mnt/run"
   mkdir /mnt/run
   innerSeperator "Mounting /mnt/run using tmp filesystem"
@@ -999,19 +1079,19 @@ function createPoolsAndMounts() {
   innerSeperator "Listing ZFS Filesystem"
   zfs list -t filesystem
 
-  stepByStep "createPoolsAndMounts"
+  stepByStep "createOtherDatasets"
 }
 
 function installBaseSystem() {
   dividerLine "Installing Debian bullseye base system !"
   sleep 2
   if [ -f "/root/debootstrap/bullseye_clean.tar.gz" ]; then
-    tar -xvpzf /root/debootstrap/bullseye_clean.tar.gz -C /mnt/
-  elif [ -f "/root/debootstrap/bullseye.tar.gz" ]; then
-    tar -xvpzf /root/debootstrap/bullseye.tar.gz -C /mnt/
+    tar -xvzf /root/debootstrap/bullseye_clean.tar.gz -C /mnt/
   else
     debootstrap bullseye /mnt
   fi
+
+  chmod 1777 /mnt/var/tmp
   stepByStep "installBaseSystem"
 }
 
@@ -1032,7 +1112,7 @@ function changeHostNameBaseSystem() {
     newHostname=$(hostname)-zfs
   fi
 
-  sed '2 i 127.0.1.1\t'"${newHostname}" /etc/hosts >/mnt/etc/hosts
+  sed '2 i 127.0.1.1\t'"${newHostname}" /etc/hosts > /mnt/etc/hosts
 
   stepByStep "changeHostNameBaseSystem"
 }
@@ -1241,7 +1321,7 @@ function chrootZfsListCaches() {
   innerSeperator "When you see changes on the screen [ Ctrl + C ]"
   sleep 3
   chroot /mnt /usr/bin/env rPoolName=${rPoolName} watch -n1 cat /etc/zfs/zfs-list.cache/${rPoolName}
-  innerSeperator "Chroot get the zed application and exit [ Ctrl + C ]"
+  innerSeperator "Chroot get the zed application and exit automatically ( pkill -15 zed)"
   chroot /mnt pkill -15 zed
 
   stepByStep "chrootZfsListCaches"
@@ -1398,6 +1478,7 @@ checkMdadmArray
 createBootPool
 createRootPool
 createPoolsAndMounts
+createOtherDatasets
 installBaseSystem
 copyPoolCache
 changeHostNameBaseSystem
