@@ -157,7 +157,7 @@ function selectSystemDisk() {
   dividerLine "Selecting System Disk"
   lsblk | grep -v -P "sr[0-9]+"
   echo -e "\n"
-  read -r -p "Select the system disk wich is you are using right now e.g ( sda | vda ) without /dev/ : " SYSTEM_DISK
+  read -r -p "Select the system disk wich is you are using right now e.g ( sda | vda | nvme ) without /dev/ : " SYSTEM_DISK
 
   echo -e "\n"
 
@@ -194,38 +194,55 @@ function selectSystemDisk() {
   fi
 
   #  dividerLine "Disks Except System Disk"
-  disksExceptSystemDisk=$(lsblk | grep -v -P "sr[0-9]+" | grep -v "${SYSTEM_DISK}" | grep -Po '^[a-z]+')
+  disksExceptSystemDisk=$(lsblk | grep -v -P "sr[0-9]+" | grep -v "${SYSTEM_DISK}" | grep -Po '^[a-z0-9]+')
 
   DISKS_EXCEPT_SYSTEM_DISK=()
   DISKS_EXCEPT_SYSTEM_DISK_BY_ID=()
+  DISKS_EXCEPT_SYSTEM_DISK_BY_PATH=()
 
 #  innerSeperator "Disk Name\tDisk by-path\t\t\tDisk by-id"
   DISK_COUNT=0
   for i in ${disksExceptSystemDisk}; do
-    diskById=$(ls -l /dev/disk/by-id/ | grep -v "part[0-9]*" | grep -P "$i" | awk '{print $9}')
-    DISKS_EXCEPT_SYSTEM_DISK_BY_ID+=("${diskById}")
-#    echo -e " $DISK_COUNT : $i\t${diskBypath}\t${diskById}"
+#    diskById=$(ls -l /dev/disk/by-id/ | grep -v "part[0-9]*" | grep -P "$i" | awk '{print $9}')
+    diskByPath=$(ls -l /dev/disk/by-path/ | grep -v "part[0-9]*" | grep -P "$i" | awk '{print $9}')
+#    DISKS_EXCEPT_SYSTEM_DISK_BY_ID+=("${diskById}")
+    DISKS_EXCEPT_SYSTEM_DISK_BY_PATH+=("${diskByPath}")
+#    echo -e " $DISK_COUNT : $i\t${diskBypath}\t${diskById}\n"
     DISK_COUNT=$((DISK_COUNT + 1))
   done
   innerSeperator "Total : ( $DISK_COUNT ) disks except System Disk (${SYSTEM_DISK})"
 
-  IFS=$'\n' sorted=($(sort <<<"${DISKS_EXCEPT_SYSTEM_DISK_BY_ID[*]}"))
-  unset IFS
-  DISKS_EXCEPT_SYSTEM_DISK_BY_ID=("${sorted[@]}")
+#  IFS=$'\n' sorted=($(sort <<<"${DISKS_EXCEPT_SYSTEM_DISK_BY_ID[*]}"))
+#  unset IFS
+#  DISKS_EXCEPT_SYSTEM_DISK_BY_ID=("${sorted[@]}")
 
-  for i in "${DISKS_EXCEPT_SYSTEM_DISK_BY_ID[@]}"; do
-    DISKS_EXCEPT_SYSTEM_DISK+=($(ls -l /dev/disk/by-id/$i | grep -iPo "[a-z]{3,}$"))
+  IFS=$'\n' sorted=($(sort <<<"${DISKS_EXCEPT_SYSTEM_DISK_BY_PATH[*]}"))
+  unset IFS
+  DISKS_EXCEPT_SYSTEM_DISK_BY_PATH=("${sorted[@]}")
+
+#  for i in "${DISKS_EXCEPT_SYSTEM_DISK_BY_ID[@]}"; do
+#    DISKS_EXCEPT_SYSTEM_DISK+=($(ls -l /dev/disk/by-id/$i | grep -iPo "[a-z]{3,}$"))
+#  done
+
+  for i in "${DISKS_EXCEPT_SYSTEM_DISK_BY_PATH[@]}"; do
+#    echo -e $(ls -l /dev/disk/by-path/$i | grep -iPo "[a-z]{3,}$|[n]vme[0-9][a-z][0-9]$")
+    DISKS_EXCEPT_SYSTEM_DISK+=($(ls -l /dev/disk/by-path/$i | grep -iPo "[a-z]{3,}$|[n]vme[0-9][a-z][0-9]$"))
   done
+
+#echo -e "${DISKS_EXCEPT_SYSTEM_DISK[*]} \n"
+#echo -e "${DISKS_EXCEPT_SYSTEM_DISK_BY_ID[*]} \n"
+#echo -e "${DISKS_EXCEPT_SYSTEM_DISK_BY_PATH[*]} \n"
 
   export SYSTEM_DISK
   export DISK_COUNT
   export DISKS_EXCEPT_SYSTEM_DISK
-  export DISKS_EXCEPT_SYSTEM_DISK_BY_ID
+#  export DISKS_EXCEPT_SYSTEM_DISK_BY_ID
+  export DISKS_EXCEPT_SYSTEM_DISK_BY_PATH
 
-  innerSeperator "Disk Name\t\tDisk by-id"
+  innerSeperator "Disk Name\t\tDisk by-path"
   cnt=0
-  for i in "${DISKS_EXCEPT_SYSTEM_DISK_BY_ID[@]}"; do
-    echo -e "$cnt : ${DISKS_EXCEPT_SYSTEM_DISK[$cnt]}\t\t\t${DISKS_EXCEPT_SYSTEM_DISK_BY_ID[$cnt]}"
+  for i in "${DISKS_EXCEPT_SYSTEM_DISK_BY_PATH[@]}"; do
+    echo -e "$cnt : ${DISKS_EXCEPT_SYSTEM_DISK[$cnt]}\t\t\t${DISKS_EXCEPT_SYSTEM_DISK_BY_PATH[$cnt]}"
     cnt=$((cnt+1))
   done
 
@@ -455,11 +472,13 @@ First disk of the array has boot partition and boot pool,
 
   innerSeperator "Disk By Dev Name"
   for i in $(seq 0 $((${#DISKS_EXCEPT_SYSTEM_DISK[@]} - 1))); do
-    echo -e "$i : ${DISKS_EXCEPT_SYSTEM_DISK[$i]}\t\t${DISKS_EXCEPT_SYSTEM_DISK_BY_ID[$i]}\n"
+#    echo -e "$i : ${DISKS_EXCEPT_SYSTEM_DISK[$i]}\t\t${DISKS_EXCEPT_SYSTEM_DISK_BY_ID[$i]}\n"
+    echo -e "$i : ${DISKS_EXCEPT_SYSTEM_DISK[$i]}\t\t${DISKS_EXCEPT_SYSTEM_DISK_BY_PATH[$i]}\n"
   done
 
   #  echo -e "${DISKS_EXCEPT_SYSTEM_DISK[@]}"
   #  echo -e "${DISKS_EXCEPT_SYSTEM_DISK_BY_ID[@]}"
+  #  echo -e "${DISKS_EXCEPT_SYSTEM_DISK_BY_PATH[@]}"
 
   read -r -p "Select Installation Disks ($settedupDiskCount of them, use sdX names) [ Enter / input ] : " selectedDisks
 
@@ -580,7 +599,12 @@ function labelClear() {
   dividerLine "ZFS Label Clear If Exist on Selected Disks"
 
   for i in "${BOOT_PARTED_DISKS[@]}"; do
-    for d in $(lsblk | grep -v -P "sr[0-9]+" | grep -iPo "${i}[0-9]+"); do
+    if [ ! -z $(grep "nvme[0-9][a-z][0-9]" <<< $i) ]; then
+      diskType="${i}p[0-9]+"
+    else
+      diskType="${i}[0-9]+"
+    fi
+    for d in $(lsblk | grep -v -P "sr[0-9]+" | grep -iPo "${diskType}"); do
       innerSeperator "ZFS Label Clear on /dev/$d"
       zpool labelclear -f "/dev/$d"
       echo -e "\n"
@@ -588,7 +612,12 @@ function labelClear() {
   done
 
   for i in "${POOL_PARTED_DISKS[@]}"; do
-    for d in $(lsblk | grep -v -P "sr[0-9]+" | grep -iPo "${i}[0-9]+"); do
+    if [ ! -z $(grep "nvme[0-9][a-z][0-9]" <<< $i) ]; then
+      diskType="${i}p[0-9]+"
+    else
+      diskType="${i}[0-9]+"
+    fi
+    for d in $(lsblk | grep -v -P "sr[0-9]+" | grep -iPo "${diskType}"); do
       innerSeperator "ZFS Label Clear on /dev/$d"
       zpool labelclear -f "/dev/$d"
       echo -e "\n"
@@ -647,7 +676,7 @@ function createPartitions() {
   innerSeperator "STRIPE DISK PARTITIONING"
   for i in "${POOL_PARTED_DISKS[@]}"; do
     innerSeperator "Root Pool Partition on /dev/$i"
-    sgdisk -n1:0:0 -t1:BF00 "/dev/$i" # root pool sdX1
+    sgdisk -n1:0:0 -t1:BF00 "/dev/$i" # root pool sdX1|nvme0n1
     sleep 0.5
 
     innerSeperator "Read the partition changes, inform the system!"
@@ -678,22 +707,41 @@ function getPartUUIDofDisks() {
 
   for i in "${BOOT_PARTED_DISKS[@]}"; do
     # Get Boot Partitions of disk
-    BOOT_PARTITIONS+=("/dev/${i}2")
-    partUuidvalue=$(blkid -s PARTUUID -o value "/dev/${i}2")
+#    nvme disks implementation
+    if [ ! -z $(grep "nvme[0-9][a-z][0-9]" <<< $i) ]; then
+      BOOT_PARTITIONS+=("/dev/${i}p2")
+      partUuidvalue=$(blkid -s PARTUUID -o value "/dev/${i}p2")
+      innerSeperator "PARTUUID of /dev/${i}p2\t${partUuidvalue}"
+    else
+      BOOT_PARTITIONS+=("/dev/${i}2")
+      partUuidvalue=$(blkid -s PARTUUID -o value "/dev/${i}2")
+      innerSeperator "PARTUUID of /dev/${i}2\t${partUuidvalue}"
+    fi
     BOOT_PARTITIONS_PARTUUID+=("${partUuidvalue}")
-    innerSeperator "PARTUUID of /dev/${i}2\t${partUuidvalue}"
 
     # Get Boot Pools of disk
-    BOOT_POOLS_PARTITIONS+=("/dev/${i}3")
-    partUuidvalue=$(blkid -s PARTUUID -o value "/dev/${i}3")
+    if [ ! -z $(grep "nvme[0-9][a-z][0-9]" <<< $i) ]; then
+      BOOT_POOLS_PARTITIONS+=("/dev/${i}p3")
+      partUuidvalue=$(blkid -s PARTUUID -o value "/dev/${i}p3")
+      innerSeperator "PARTUUID of /dev/${i}p3\t${partUuidvalue}"
+    else
+      BOOT_POOLS_PARTITIONS+=("/dev/${i}3")
+      partUuidvalue=$(blkid -s PARTUUID -o value "/dev/${i}3")
+      innerSeperator "PARTUUID of /dev/${i}3\t${partUuidvalue}"
+    fi
     BOOT_POOLS_PARTITIONS_PARTUUID+=("${partUuidvalue}")
-    innerSeperator "PARTUUID of /dev/${i}3\t${partUuidvalue}"
 
     # Get Root Pools of disk
-    ROOT_PARTITIONS+=("/dev/${i}4")
-    partUuidvalue=$(blkid -s PARTUUID -o value "/dev/${i}4")
+    if [ ! -z $(grep "nvme[0-9][a-z][0-9]" <<< $i) ]; then
+      ROOT_PARTITIONS+=("/dev/${i}p4")
+      partUuidvalue=$(blkid -s PARTUUID -o value "/dev/${i}p4")
+      innerSeperator "PARTUUID of /dev/${i}p4\t${partUuidvalue}"
+    else
+      ROOT_PARTITIONS+=("/dev/${i}4")
+      partUuidvalue=$(blkid -s PARTUUID -o value "/dev/${i}4")
+      innerSeperator "PARTUUID of /dev/${i}4\t${partUuidvalue}"
+    fi
     ROOT_PARTITIONS_PARTUUID+=("${partUuidvalue}")
-    innerSeperator "PARTUUID of /dev/${i}4\t${partUuidvalue}"
   done
 
   # /dev/sdX1 | part1 (full disk)
@@ -702,10 +750,16 @@ function getPartUUIDofDisks() {
 
   for i in "${POOL_PARTED_DISKS[@]}"; do
     # Get Pool Partitions of disk
-    POOL_PARTITIONS+=("/dev/${i}1")
-    partUuidvalue=$(blkid -s PARTUUID -o value "/dev/${i}1")
+    if [ ! -z $(grep "nvme[0-9][a-z][0-9]" <<< $i) ]; then
+      POOL_PARTITIONS+=("/dev/${i}p1")
+      partUuidvalue=$(blkid -s PARTUUID -o value "/dev/${i}p1")
+      innerSeperator "PARTUUID of /dev/${i}p1\t${partUuidvalue}"
+    else
+      POOL_PARTITIONS+=("/dev/${i}1")
+      partUuidvalue=$(blkid -s PARTUUID -o value "/dev/${i}1")
+      innerSeperator "PARTUUID of /dev/${i}1\t${partUuidvalue}"
+    fi
     POOL_PARTITIONS_PARTUUID+=("${partUuidvalue}")
-    innerSeperator "PARTUUID of /dev/${i}1\t${partUuidvalue}"
   done
 
   # sdX2
@@ -1085,8 +1139,10 @@ function createOtherDatasets() {
 function installBaseSystem() {
   dividerLine "Installing Debian bullseye base system !"
   sleep 2
-  if [ -f "/root/debootstrap/bullseye_clean.tar.gz" ]; then
-    tar -xvzf /root/debootstrap/bullseye_clean.tar.gz -C /mnt/
+  if [ -f "/root/debootstrap/bullseye.tar.gz" ]; then
+    tar -xvzf /root/debootstrap/bullseye.tar.gz -C /mnt/
+  elif [ -f "/root/debootstrap/bullseye_clean.tar.gz" ]; then
+	tar -xvzf /root/debootstrap/bullseye_clean.tar.gz -C /mnt/
   else
     debootstrap bullseye /mnt
   fi
