@@ -194,7 +194,7 @@ function selectSystemDisk() {
   fi
 
   #  dividerLine "Disks Except System Disk"
-  disksExceptSystemDisk=$(lsblk | grep -v -P "sr[0-9]+" | grep -v "${SYSTEM_DISK}" | grep -Po '^[a-z0-9]+')
+  disksExceptSystemDisk=$(lsblk | grep -v -P "sr[0-9]+" | grep -v "loop*" | grep -v "${SYSTEM_DISK}" | grep -Po '^[a-z0-9]+')
 
   DISKS_EXCEPT_SYSTEM_DISK=()
   DISKS_EXCEPT_SYSTEM_DISK_BY_ID=()
@@ -204,7 +204,7 @@ function selectSystemDisk() {
   DISK_COUNT=0
   for i in ${disksExceptSystemDisk}; do
 #    diskById=$(ls -l /dev/disk/by-id/ | grep -v "part[0-9]*" | grep -P "$i" | awk '{print $9}')
-    diskByPath=$(ls -l /dev/disk/by-path/ | grep -v "part[0-9]*" | grep -P "$i" | awk '{print $9}')
+    diskByPath=$(ls -l /dev/disk/by-path/ | grep -v "part[0-9]*" | grep -P "$i" | awk '{print $9}' | head -n 1)
 #    DISKS_EXCEPT_SYSTEM_DISK_BY_ID+=("${diskById}")
     DISKS_EXCEPT_SYSTEM_DISK_BY_PATH+=("${diskByPath}")
 #    echo -e " $DISK_COUNT : $i\t${diskBypath}\t${diskById}\n"
